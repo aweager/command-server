@@ -2,42 +2,133 @@
 
 Client-server setup for running commands transparently in a different environment
 
-## Implementation details
+## Protocol
 
-The server is designed to process requests in order, one at a time, from a unix
-domain socket.
+The server is designed to process requests on a unix domain socket.
 
-### Listener
-
-Listens on a socket for requests. The format of a request is:
+The request type is determined by the first line (the verb), followed by some
+number of null-terminated "lines" depending on the selected verb. In the below
+code samples, read all newlines as null bytes.
 
 ```
-<stdin> <stdout> <stderr> <response-pipe> <client-id>
+[call|sig|reload]
+<body>
+```
+
+### call
+
+```
+call
+<dir>
+<stdin>
+<stdout>
+<stderr>
+<response-pipe>
 <command>
 ```
 
-- `client-id`: the PID of the client (used for logging)
-- `response-pipe`: the file to write to when communicating to the client
+- `dir`: the working directory to use for the command
 - `stdin, stdout, stderr`: files to use for standard IO when executing the
   request
-- `command`: the actual request to execute
+- `response-pipe`: the pipe to write to to communicate to the client
+- `command`: the actual request to execute, usually a POSIX-quoted string
 
-Once the command is completed, the server writes the status code to
-the `response-pipe`.
+To ack the request, the server writes an identifier representing the call into
+the `response-pipe`, followed by a null byte. Once the command is completed,
+the server writes the status code to the `response-pipe`, again followed by a
+null byte.
 
-Following the command, the client will send a code indicating how it wants to
-detach. The code tells the server what to do with the running request:
+### sig
 
-- `-1`: background the requests
-- `0`: request was completed
-- `1`: interrupt and cancel the requests
+```
+sig
+<request-id>
+<signal>
+```
 
-### Executor loop
+Send the specified `signal` to the request with the given ID. The following
+signals from the [POSIX standard](https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/signal.h.html)
+are supported:
 
-Reads commands from $1 (in the format described above) and executes them,
-writing 'done' to $2 when it has finished each request.
+- `HUP`
+- `INT`
+- `QUIT`
+- `TERM`
 
-### Call
+### reload
 
-Calls the server through the socket. Responsible for forwarding file descriptors
-through FIFOs or ttys.
+```
+reload
+<dir>
+<stdin>
+<stdout>
+<stderr>
+<response-pipe>
+```
+
+Instructs the server to reload its configuration, and use that configuration for
+all future requests.
+
+## Implementation
+
+To simplify implementation of the protocol, the server binary makes use of an
+adapter pattern with an "executor" coprocess which dispatches commands
+written to its standard input.
+
+### Executor API
+
+When first stood up, a single file name `queue-ops` will be written to standard input.
+
+On Standard input:
+
+```
+<request-id>
+<dir>
+<stdin>
+<stdout>
+<stderr>
+<response-pipe>
+<command>
+```
+
+Writing to standard output, followed by a newline:
+
+```
+<pid>
+```
+
+Where `pid` is the process ID which is handling the execution of the command.
+
+When the request is completed, will write to `queue-ops`:
+
+```
+done
+<request-id>
+```
+
+### Executor shell lib
+
+There are three provided implementations of the executor API in the form of
+shell scripts, which may be sourced by their respective shells:
+
+#### POSIX
+
+`bin/lib/posix-executor-loop.sh` expects a shell function (or other command)
+named `execute-command` to be defined, which accepts the `command` as its only
+argument. The working directory, STDIO, and status reporting are all handled
+for you.
+
+WARNING: this script is not currently actually POSIX-compliant, because it
+relies on the `-d` option of `read` to split on null bytes.
+
+#### bash
+
+`bin/lib/bash-executor-loop.bash` wraps around the POSIX implementation. It
+assumes the `command` is a sequence of shell-quoted arguments. The function
+`execute-bash-command` will be handed those arguments for execution.
+
+#### zsh
+
+`bin/lib/zsh-executor-loop.zsh` wraps around the POSIX implementation. It
+assumes the `command` is a sequence of shell-quoted arguments. The function
+`execute-zsh-command` will be handed those arguments for execution.

@@ -4,12 +4,13 @@ zmodload zsh/zutil
 zmodload zsh/net/socket
 zmodload -F zsh/stat b:zstat
 
-function call() {
+function call-command-server() {
     setopt local_options local_traps err_return
 
     local -a fifos
     local -a pids
     local send_fd
+    local request_id
 
     () {
         private -a arg_background
@@ -19,6 +20,27 @@ function call() {
         private backgrounded=""
         if [[ -n $arg_background ]]; then
             backgrounded=1
+        else
+            trap '
+                if [[ -n "$request_id" ]]; then
+                    printf "%s\\0" sig "$request_id" INT >&$send_fd
+                fi
+            ' INT
+            trap '
+                if [[ -n "$request_id" ]]; then
+                    printf "%s\\0" sig "$request_id" TERM
+                fi
+            ' TERM
+            trap '
+                if [[ -n "$request_id" ]]; then
+                    printf "%s\\0" sig "$request_id" QUIT
+                fi
+            ' QUIT
+            trap '
+                if [[ -n "$request_id" ]]; then
+                    printf "%s\\0" sig "$request_id" HUP
+                fi
+            ' HUP
         fi
 
         trap '
@@ -87,23 +109,31 @@ function call() {
             mkfifo -m 600 "$receive"
         fi
 
-        local -a stdio_args=("$stdin" "$stdout" "$stderr" "$receive" "$$")
-        trap '
-            trap - INT
-            echo "2" >&$send_fd
-        ' INT
-        echo -E "${(@q+)stdio_args}" >&$send_fd
-        echo -E "${(@q+)*}" >&$send_fd
+        local -a quoted_command=("${(@q+)*}")
+        local -a request=(
+            "call"
+            "$PWD"
+            "$stdin"
+            "$stdout"
+            "$stderr"
+            "$receive"
+            "$quoted_command[*]"
+        )
+
+        local request_id
+
+        printf '%s\0' "${request[@]}" >&$send_fd
+
+        IFS="" read request_id < "$receive"
 
         if [[ -n $backgrounded ]]; then
-            echo "-1" >&$send_fd
             return 0
         else
-            local result="$(cat -u "$receive")"
-            echo "0" >&$send_fd
+            local result
+            IFS="" read result < "$receive"
             return $result
         fi
     } "$@"
 }
 
-call "$@"
+call-command-server "$@"
