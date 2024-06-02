@@ -1,0 +1,156 @@
+#!/bin/zsh
+
+0="${ZERO:-${${0:#$ZSH_ARGZERO}:-${(%):-%N}}}"
+0="${${(M)0:#/*}:-$PWD/$0}"
+
+cd "${0:h}"
+
+#### Usage:
+#       ./main [-L | --listen <socket>] [--log-level <level>] [--log-file <file>] <executor>
+
+zmodload zsh/net/socket
+zmodload zsh/param/private
+zmodload zsh/zutil
+
+private -a arg_socket arg_log_level arg_log_file
+zparseopts -D -E -F -- \
+    {L,-listen}:=arg_socket \
+    -log-level:=arg_log_level \
+    -log-file:=arg_log_file \
+        || return 1
+
+private socket
+if [[ -n $arg_socket ]]; then
+    socket="$arg_socket[-1]"
+else
+    socket="$(mktemp -u)"
+fi
+
+typeset -gx LOG_LEVEL
+if [[ -n $arg_log_level ]]; then
+    LOG_LEVEL="$arg_log_level[-1]"
+else
+    LOG_LEVEL="info"
+fi
+
+if [[ -n $arg_log_file ]]; then
+    typeset -g LOG="$arg_log_file[-1]"
+fi
+
+source "logger.zsh"
+
+private EXECUTOR="$1"
+
+private -a pids
+private -a files
+trap '
+    trap - INT TERM EXIT
+    log.info "Shutting down: $1"
+
+    coproc.kill
+
+    if [[ -S "$socket" ]]; then
+        log.info "Deleting socket: $socket"
+        rm "$socket"
+    fi
+
+    log.info "Goodbye"
+    kill $$
+' INT TERM EXIT
+
+log "
+-- Starting instance $$ --
+"
+
+local coproc_pid coproc_in_fifo coproc_out_fifo coproc_in_fd coproc_out_fd
+function coproc.build() {
+    log.info "Setting up coprocess"
+    coproc socat STDIO "EXEC:zsh -f,pty,sane"
+    coproc_pid=$!
+
+    coproc_in_fifo="$(mktemp -u)"
+    coproc_out_fifo="$(mktemp -u)"
+    mkfifo -m 600 "$coproc_out_fifo" "$coproc_in_fifo"
+    printf '%s\n' "source '$EXECUTOR' '$coproc_in_fifo' '$coproc_out_fifo'" >&p
+    exec {coproc_in_fd}<>"$coproc_in_fifo" {coproc_out_fd}<>"$coproc_out_fifo"
+}
+
+function coproc.write() {
+    echo "$@" >&$coproc_in_fd
+}
+
+function coproc.wait() {
+    read -e <&$coproc_out_fd
+}
+
+function coproc.interrupt() {
+    echo -ne '\x03\x03' >&p
+    printf '%s\n' "source '$EXECUTOR' '$coproc_in_fifo' '$coproc_out_fifo'" >&p
+}
+
+function coproc.kill() {
+    if [[ -n $coproc_pid ]]; then
+        log.info "Terminating coprocess"
+        kill -HUP "$coproc_pid" &> /dev/null
+        coproc_pid=""
+    fi
+
+    if [[ -n $coproc_in_fd ]]; then
+        exec {coproc_in_fd}>&-
+        coproc_in_fd=""
+    fi
+
+    if [[ -n $coproc_out_fd ]]; then
+        exec {coproc_out_fd}>&-
+        coproc_out_fd=""
+    fi
+
+    if [[ -n $coproc_in_fifo ]]; then
+        rm "$coproc_in_fifo"
+        coproc_in_fifo=""
+    fi
+
+    if [[ -n $coproc_out_fifo ]]; then
+        rm "$coproc_out_fifo"
+        coproc_out_fifo=""
+    fi
+}
+
+coproc.build
+
+zsocket -l "$socket" || exit 1
+private socket_fd="$REPLY"
+log.info "Listening on $socket"
+
+while true; do
+    () {
+        log.info "Waiting for a client"
+        zsocket -a "$1"
+        private recv_fd="$REPLY"
+
+        read -u $recv_fd
+        coproc.write "$REPLY"
+        read -u $recv_fd
+        coproc.write "$REPLY"
+
+        log.trace "Waiting for client to respond"
+        private client_response
+        read -u $recv_fd client_response
+
+        log.trace "Client responded with '$client_response'"
+
+        if [[ "$client_response" == "2" ]]; then
+            log.info "Interrupting current job"
+            coproc.interrupt
+        elif [[ "$client_response" == "-1" ]]; then
+            log.info "Client backgrounded, waiting for coproc"
+            coproc.wait
+        fi
+
+        exec {recv_fd}>&-
+        recv_fd=""
+        send=""
+
+        log.info "Client disconnected"
+    } "$socket_fd"
+done

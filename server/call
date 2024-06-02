@@ -1,0 +1,109 @@
+#!/bin/zsh
+
+zmodload zsh/zutil
+zmodload zsh/net/socket
+zmodload -F zsh/stat b:zstat
+
+function call() {
+    setopt local_options local_traps err_return
+
+    local -a fifos
+    local -a pids
+    local send_fd
+
+    () {
+        private -a arg_background
+        zparseopts -D -- \
+            {b,-background}=arg_background
+
+        private backgrounded=""
+        if [[ -n $arg_background ]]; then
+            backgrounded=1
+        fi
+
+        trap '
+            local pid
+            for pid in "$pids[@]"; do
+                kill -HUP "$pid" &> /dev/null || true
+            done
+
+            local fifo
+            for fifo in "$fifos[@]"; do
+                if [[ -e $fifo ]]; then
+                    rm "$fifo"
+                fi
+            done
+
+            if [[ -n "$send_fd" ]]; then
+                exec {send_fd}>&-
+            fi
+        ' EXIT
+
+        local socket="$1"
+        zsocket "$socket"
+        send_fd="$REPLY"
+        shift
+
+        local stdin stdout stderr receive
+
+        if [[ -t 0 && -z $backgrounded ]]; then
+            # need to use $(tty) instead of $TTY because we need whatever is hooked
+            # up to fd 0, not what this shell started with
+            stdin="$(tty)"
+        elif [[ -z $backgrounded ]]; then
+            stdin="$(mktemp -u)"
+            socat -u FD:0 "PIPE:$stdin" &> /dev/null &
+            pids+=("$!")
+        else
+            stdin=/dev/null
+        fi
+
+        if [[ -n $backgrounded ]]; then
+            stdout=/dev/null
+            stderr=/dev/null
+            receive=/dev/null
+        else
+            stdout="$(mktemp -u)"
+            socat -U FD:1 "PIPE:$stdout,ignoreeof" 2> /dev/null &
+            pids+=("$!")
+
+            # If stdout and stderr are the same, don't separate them here.
+            # This allows us to maintain line order writing to the terminal
+            local -A OutStat
+            zstat -H OutStat -f 1
+            local -A ErrStat
+            zstat -H ErrStat -f 2
+            if [[ "$OutStat[inode]" == "$ErrStat[inode]" && "$OutStat[rdev]" == "$ErrStat[rdev]" ]]; then
+                stderr="$stdout"
+            else
+                stderr="$(mktemp -u)"
+                socat -U FD:2 "PIPE:$stderr,ignoreeof" 2> /dev/null &
+                pids+=("$!")
+            fi
+
+            # FIFO for receiving $? from the server
+            receive="$(mktemp -u)"
+            fifos+=("$receive")
+            mkfifo -m 600 "$receive"
+        fi
+
+        local -a stdio_args=("$stdin" "$stdout" "$stderr" "$receive" "$$")
+        trap '
+            trap - INT
+            echo "2" >&$send_fd
+        ' INT
+        echo -E "${(@q+)stdio_args}" >&$send_fd
+        echo -E "${(@q+)*}" >&$send_fd
+
+        if [[ -n $backgrounded ]]; then
+            echo "-1" >&$send_fd
+            return 0
+        else
+            local result="$(cat -u "$receive")"
+            echo "0" >&$send_fd
+            return $result
+        fi
+    } "$@"
+}
+
+call "$@"
