@@ -21,24 +21,25 @@ function call-command-server() {
         if [[ -n $arg_background ]]; then
             backgrounded=1
         else
+            # TODO need to open new connection for these
             trap '
                 if [[ -n "$request_id" ]]; then
-                    printf "%s\\0" sig "$request_id" INT >&$send_fd
+                    printf "%s\\n" sig "$request_id" INT >&$send_fd
                 fi
             ' INT
             trap '
                 if [[ -n "$request_id" ]]; then
-                    printf "%s\\0" sig "$request_id" TERM
+                    printf "%s\\n" sig "$request_id" TERM
                 fi
             ' TERM
             trap '
                 if [[ -n "$request_id" ]]; then
-                    printf "%s\\0" sig "$request_id" QUIT
+                    printf "%s\\n" sig "$request_id" QUIT
                 fi
             ' QUIT
             trap '
                 if [[ -n "$request_id" ]]; then
-                    printf "%s\\0" sig "$request_id" HUP
+                    printf "%s\\n" sig "$request_id" HUP
                 fi
             ' HUP
         fi
@@ -117,12 +118,17 @@ function call-command-server() {
             "$stdout"
             "$stderr"
             "$receive"
-            "$quoted_command[*]"
+            "${#quoted_command}"
+            "$quoted_command[@]"
         )
 
         local request_id
 
-        printf '%s\0' "${request[@]}" >&$send_fd
+        echo "Writing to socket:"
+        printf '    %s\n' "${request[@]}"
+        printf '%s\n' "${request[@]}" >&$send_fd
+        exec {send_fd}>&-
+        send_fd=""
 
         IFS="" read request_id < "$receive"
 

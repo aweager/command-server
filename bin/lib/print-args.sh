@@ -1,6 +1,6 @@
-#!/usr/bin/env zsh
+#!/bin/sh
 
-function execute-zsh-command() {
+execute_command () {
     echo "In working dir: $PWD" >&2
     echo "Executing command:"
     printf '    %s\n' "$@"
@@ -8,4 +8,4 @@ function execute-zsh-command() {
     "$@"
 }
 
-source "zsh-executor-loop.zsh"
+source "lib/posix-executor-loop.sh"

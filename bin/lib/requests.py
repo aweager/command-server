@@ -9,7 +9,7 @@ class CallRequest:
     stdout: str
     stderr: str
     response_pipe: str
-    command: str
+    command: list[str]
 
 
 @dataclass

@@ -18,4 +18,4 @@ class WorkItem:
     stdout: str
     stderr: str
     response_pipe: str
-    command: str
+    command: list[str]

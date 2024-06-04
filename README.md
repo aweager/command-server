@@ -7,8 +7,11 @@ Client-server setup for running commands transparently in a different environmen
 The server is designed to process requests on a unix domain socket.
 
 The request type is determined by the first line (the verb), followed by some
-number of null-terminated "lines" depending on the selected verb. In the below
-code samples, read all newlines as null bytes.
+number of lines depending on the selected verb. Variables in the line should
+be escaped as follows:
+
+- `\` -> `\\`
+- newline -> `\n`
 
 ```
 [call|sig|reload]
@@ -24,19 +27,21 @@ call
 <stdout>
 <stderr>
 <response-pipe>
-<command>
+<num-command-args>
+<command>...
 ```
 
 - `dir`: the working directory to use for the command
 - `stdin, stdout, stderr`: files to use for standard IO when executing the
   request
 - `response-pipe`: the pipe to write to to communicate to the client
-- `command`: the actual request to execute, usually a POSIX-quoted string
+- `num-command-args`: the number of lines to read for the `command`
+- `command`: the actual request to execute (one or more lines)
 
 To ack the request, the server writes an identifier representing the call into
-the `response-pipe`, followed by a null byte. Once the command is completed,
+the `response-pipe`, followed by a newline. Once the command is completed,
 the server writes the status code to the `response-pipe`, again followed by a
-null byte.
+newline.
 
 ### sig
 
@@ -77,9 +82,10 @@ written to its standard input.
 
 ### Executor API
 
-When first stood up, a single file name `queue-ops` will be written to standard input.
+When first stood up, a single file name `queue-ops` will be written to standard
+input, followed by a newline.
 
-On Standard input:
+In a loop, the executor reads on standard input:
 
 ```
 <request-id>
@@ -88,10 +94,11 @@ On Standard input:
 <stdout>
 <stderr>
 <response-pipe>
-<command>
+<num-command-args>
+<command>...
 ```
 
-Writing to standard output, followed by a newline:
+Writing to standard output:
 
 ```
 <pid>
@@ -102,33 +109,13 @@ Where `pid` is the process ID which is handling the execution of the command.
 When the request is completed, will write to `queue-ops`:
 
 ```
-done
-<request-id>
+done <request-id>
 ```
 
 ### Executor shell lib
 
-There are three provided implementations of the executor API in the form of
-shell scripts, which may be sourced by their respective shells:
-
-#### POSIX
-
-`bin/lib/posix-executor-loop.sh` expects a shell function (or other command)
-named `execute-command` to be defined, which accepts the `command` as its only
-argument. The working directory, STDIO, and status reporting are all handled
+A POSIX-compliant shell implementation of the executor is provided at
+`bin/lib/posix-executor-loop.sh`. It expects a function (or other command)
+named `execute-command` to be defined, which accepts the `command` as its
+arguments. The working directory, STDIO, and status reporting are all handled
 for you.
-
-WARNING: this script is not currently actually POSIX-compliant, because it
-relies on the `-d` option of `read` to split on null bytes.
-
-#### bash
-
-`bin/lib/bash-executor-loop.bash` wraps around the POSIX implementation. It
-assumes the `command` is a sequence of shell-quoted arguments. The function
-`execute-bash-command` will be handed those arguments for execution.
-
-#### zsh
-
-`bin/lib/zsh-executor-loop.zsh` wraps around the POSIX implementation. It
-assumes the `command` is a sequence of shell-quoted arguments. The function
-`execute-zsh-command` will be handed those arguments for execution.
