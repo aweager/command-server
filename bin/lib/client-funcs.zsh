@@ -39,26 +39,11 @@ function command-server-call() {
         if [[ -n "$backgrounded" ]]; then
             __command-server-forward-stdio -b
         else
-            local sig return_val
-            for sig in TERM HUP; do
-                return_val=$(($signals[(Ie)$sig] + 127))
+            local sig
+            for sig in INT TERM QUIT HUP; do
                 trap "
                     if [[ -n \"\$request_id\" ]]; then
                         command-server-sig '$socket' \"\$request_id\" '$sig'
-                    fi
-                    IFS= read result < \"\$status_pipe\"
-                    return \$result
-                " "$sig"
-            done
-
-            # TODO: how to get executor shell to accept INT and QUIT
-            # https://unix.stackexchange.com/questions/614774/child-shell-script-didnt-respond-to-terminal-interrupt-sent-to-the-foreground-p
-            # Mapping to TERM for now
-            for sig in INT QUIT; do
-                return_val=$(($signals[(Ie)$sig] + 127))
-                trap "
-                    if [[ -n \"\$request_id\" ]]; then
-                        command-server-sig '$socket' \"\$request_id\" 'TERM'
                     fi
                     IFS= read result < \"\$status_pipe\"
                     return \$result

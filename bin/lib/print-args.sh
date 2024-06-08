@@ -5,18 +5,27 @@ execute_command () {
     echo "Executing command:"
     printf '    %s\n' "$@"
 
-    for sig in INT TERM HUP QUIT; do
-        trap "
-            echo 'print-args got $sig' >> log.txt
-            if [ -n \"\$CHILD_PID\" ]; then
-                kill -s '$sig' \"\$CHILD_PID\"
-                wait \"\$CHILD_PID\"
-                exit \$?
-            else
-                exit 14
-            fi
-        " "$sig"
-    done
+    trap '
+        echo "print-args got TERM" >&2
+        if [ -n "$CHILD_PID" ]; then
+            kill -s TERM "$CHILD_PID"
+            wait "$CHILD_PID"
+            exit $?
+        else
+            exit 143
+        fi
+    ' TERM
+
+    trap '
+        echo "print-args got HUP" >&2
+        if [ -n "$CHILD_PID" ]; then
+            kill -s HUP "$CHILD_PID"
+            wait "$CHILD_PID"
+            exit $?
+        else
+            exit 129
+        fi
+    ' HUP
 
     "$@" &
     CHILD_PID="$!"

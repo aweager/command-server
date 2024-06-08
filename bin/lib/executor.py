@@ -3,12 +3,15 @@ import subprocess
 import queue
 import os
 import logging
-from typing import Generator, Optional
+import sys
+from typing import Generator, Optional, Tuple
 
+from .server_config import ExecutorConfig
 from .model import *
 from .operations import *
 from . import token_io
 from .token_io import TokenReader, TokenWriter, Mode
+from . import server_config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -94,8 +97,7 @@ class ExecutorManager:
     work_items: dict[int, WorkItem]
     ops_queue: queue.Queue[Operation]
     ops_fifo_path: str
-    max_concurrency: int
-    executor_command: list[str]
+    config: ExecutorConfig
 
     waiting_work_items: list[int]
     active_work_items: dict[int, int]
@@ -105,14 +107,12 @@ class ExecutorManager:
         work_items: dict[int, WorkItem],
         ops_queue: queue.Queue[Operation],
         ops_fifo_path: str,
-        max_concurrency: int,
-        executor_command: list[str],
+        config: ExecutorConfig,
     ) -> None:
         self.work_items = work_items
         self.ops_queue = ops_queue
         self.ops_fifo_path = ops_fifo_path
-        self.max_concurrency = max_concurrency
-        self.executor_command = executor_command
+        self.config = config
 
         self.waiting_work_items = list()
         self.active_work_items = dict()
@@ -124,7 +124,7 @@ class ExecutorManager:
         with token_io.open_pipe_reader(self.ops_fifo_path) as ops_fifo:
             while True:
                 with make_executor(
-                    self.executor_command, load_stdio, self.ops_fifo_path
+                    self.config.command, load_stdio, self.ops_fifo_path
                 ) as executor:
                     while True:
                         _LOGGER.warning("Reading from ops fifo")
@@ -141,8 +141,11 @@ class ExecutorManager:
                                 case SignalWorkItem(id, signal):
                                     self.signal_work_item(id, signal)
                                 case ReloadExecutor():
-                                    load_stdio = operation.stdio
-                                    break
+                                    new_config = self.reload_config(operation.stdio)
+                                    if new_config:
+                                        self.config = new_config
+                                        load_stdio = operation.stdio
+                                        break
                         else:
                             _LOGGER.error(f"Received invalid operation")
 
@@ -162,7 +165,7 @@ class ExecutorManager:
             del self.active_work_items[id]
 
     def maybe_start_work_item(self, executor: Executor) -> None:
-        if len(self.active_work_items) >= self.max_concurrency:
+        if len(self.active_work_items) >= self.config.max_concurrency:
             return
 
         id: Optional[int] = None
@@ -180,15 +183,30 @@ class ExecutorManager:
         _LOGGER.warning(f"Work item {id} -> {pid}")
 
     def signal_work_item(self, id: int, signal: SupportedSignal) -> None:
+        if signal in self.config.signal_translations.mapping:
+            signal = self.config.signal_translations.mapping[signal]
         if id in self.active_work_items:
             pid = self.active_work_items[id]
-            _LOGGER.warning(f"Signaling job {id}, pid {pid} with {signal.value}")
+            _LOGGER.warning(f"Signaling job {id}, pid {pid} with {signal}")
             os.kill(pid, signal.value)
         elif id in self.work_items:
             work_item = self.work_items[id]
             with token_io.open_pipe_writer(work_item.stdio.status_pipe) as status_pipe:
                 status_pipe.write([str(signal.value + 128)])
             del self.work_items[id]
+
+    def reload_config(self, reload_stdio: Stdio) -> Optional[ExecutorConfig]:
+        try:
+            return server_config.parse_config(sys.argv[1:]).executor_config
+        except Exception as ex:
+            with token_io.open_pipe_writer(
+                reload_stdio.stderr
+            ) as stderr, token_io.open_pipe_writer(
+                reload_stdio.status_pipe
+            ) as status_pipe:
+                stderr.write([f"Failed to parse config on reload: {ex}"])
+                status_pipe.write(["127"])
+                return None
 
     def parse_op(self, op_line: str) -> None | Operation:
         if op_line == "poll":

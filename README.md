@@ -14,7 +14,7 @@ be escaped as follows:
 - newline -> `\n`
 
 ```
-[call|sig|reload]
+[call|sig|reload|term]
 <body>
 ```
 
@@ -71,6 +71,15 @@ reload
 ```
 
 Instructs the server to reload its configuration.
+
+### term
+
+```
+term
+```
+
+Instructs the server to gracefully shutdown. Currently active requests will
+continue, but pending requests will be interrupted.
 
 ## Implementation
 

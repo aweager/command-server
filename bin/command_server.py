@@ -5,6 +5,8 @@ import os
 import queue
 import threading
 
+from lib import server_config
+from lib.server_config import CommandServerConfig
 from lib.requests import *
 from lib.operations import *
 from lib.model import *
@@ -12,14 +14,12 @@ from lib.executor import *
 from lib.socket_listener import *
 
 
-def main(
-    sock_addr: str, max_concurrency: int, load_stdio: Stdio, executor_command: list[str]
-) -> int:
-    if os.path.exists(sock_addr):
+def main(config: CommandServerConfig) -> int:
+    if os.path.exists(config.socket_address):
         try:
-            os.unlink(sock_addr)
+            os.unlink(config.socket_address)
         except OSError:
-            if os.path.exists(sock_addr):
+            if os.path.exists(config.socket_address):
                 raise
 
     work_items: dict[int, WorkItem] = dict()
@@ -27,7 +27,7 @@ def main(
 
     with token_io.mkfifo() as ops_fifo:
         socket_listener = SocketListener(
-            sock_addr=sock_addr,
+            sock_addr=config.socket_address,
             ops_fifo_path=ops_fifo,
             ops_queue=ops_queue,
             work_items=work_items,
@@ -39,11 +39,10 @@ def main(
             ops_fifo_path=ops_fifo,
             ops_queue=ops_queue,
             work_items=work_items,
-            max_concurrency=max_concurrency,
-            executor_command=executor_command,
+            config=config.executor_config,
         )
         executor_manager_thread = threading.Thread(
-            target=executor_manager.loop, args=[load_stdio]
+            target=executor_manager.loop, args=[config.initial_load_stdio]
         )
         executor_manager_thread.start()
 
@@ -53,20 +52,5 @@ def main(
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 8:
-        raise ValueError(f"Received {len(sys.argv)} but require >= 8")
-
-    sock_addr = sys.argv[1]
-    max_concurrency = int(sys.argv[2])
-    stdio = Stdio(
-        stdin=sys.argv[3],
-        stdout=sys.argv[4],
-        stderr=sys.argv[5],
-        status_pipe=sys.argv[6],
-    )
-    command = sys.argv[7:]
-
-    if max_concurrency <= 0:
-        max_concurrency = sys.maxsize
-
-    sys.exit(main(sock_addr, max_concurrency, stdio, command))
+    config = server_config.parse_config(sys.argv[1:])
+    sys.exit(main(config))
