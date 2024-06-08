@@ -5,10 +5,7 @@ from .model import *
 @dataclass
 class CallRequest:
     dir: str
-    stdin: str
-    stdout: str
-    stderr: str
-    response_pipe: str
+    stdio: Stdio
     command: list[str]
 
 
@@ -20,11 +17,7 @@ class SignalRequest:
 
 @dataclass
 class ReloadRequest:
-    dir: str
-    stdin: str
-    stdout: str
-    stderr: str
-    response_pipe: str
+    args: Stdio
 
 
-Request = None | CallRequest | SignalRequest | ReloadRequest
+Request = CallRequest | SignalRequest | ReloadRequest

@@ -1,48 +1,90 @@
+from contextlib import contextmanager
+from dataclasses import dataclass
+from enum import Enum
 import os
+import tempfile
 import socket
-from typing import Optional
+from typing import Generator, Optional, Tuple
 
 
+@contextmanager
+def mkfifo() -> Generator[str, None, None]:
+    dir: Optional[str] = None
+    path: Optional[str] = None
+    try:
+        dir = tempfile.mkdtemp()
+        path = os.path.join(dir, "pipe")
+        os.mkfifo(path)
+        yield path
+    finally:
+        if path is not None:
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+        if dir is not None:
+            try:
+                os.rmdir(dir)
+            except FileNotFoundError:
+                pass
+
+
+class Mode(Enum):
+    R = 1
+    W = 2
+    RW = 3
+
+    def to_flag(self) -> int:
+        match self:
+            case Mode.R:
+                return os.O_RDONLY
+            case Mode.W:
+                return os.O_WRONLY
+            case Mode.RW:
+                return os.O_RDWR
+
+
+@contextmanager
+def open_fd(path: str, mode: Mode) -> Generator[int, None, None]:
+    with open_fds((path, mode)) as fds:
+        yield fds[0]
+
+
+@contextmanager
+def open_fds(*args: Tuple[str, Mode]) -> Generator[list[int], None, None]:
+    files_to_open: dict[str, int] = dict()
+    fds_by_file: dict[str, int] = dict()
+    for arg in args:
+        if arg[0] not in files_to_open:
+            files_to_open[arg[0]] = arg[1].value
+        else:
+            files_to_open[arg[0]] |= arg[1].value
+
+    try:
+        for path, mode_value in files_to_open.items():
+            fds_by_file[path] = os.open(path, Mode(mode_value).to_flag())
+        yield [fds_by_file[x[0]] for x in args]
+    finally:
+        for fd in fds_by_file.values():
+            os.close(fd)
+
+
+@dataclass
 class _SocketRecvWrapper:
     connection: socket.socket
-    is_open: bool
-
-    def __init__(self, server: socket.socket) -> None:
-        self.connection, _ = server.accept()
-        self.is_open = True
-
-    def close(self) -> None:
-        if self.is_open:
-            self.connection.close()
-            self.is_open = False
 
     def read(self) -> Optional[str]:
-        if not self.is_open:
-            raise RuntimeError("Socket reader was closed")
-
         result = self.connection.recv(1024)
         if len(result) == 0:
             return None
         return result.decode()
 
 
+@dataclass
 class _PipeReadWrapper:
     fd: int
-    is_open: bool
-
-    def __init__(self, fifo_path: str) -> None:
-        self.fd = os.open(fifo_path, os.O_RDONLY)
-        self.is_open = True
-
-    def close(self):
-        if self.is_open:
-            os.close(self.fd)
-            self.is_open = False
 
     def read(self) -> Optional[str]:
-        if not self.is_open:
-            raise RuntimeError("Pipe reader was closed")
-
         result = os.read(self.fd, 1024)
         if len(result) == 0:
             return None
@@ -52,26 +94,13 @@ class _PipeReadWrapper:
 _ReadWrapper = _SocketRecvWrapper | _PipeReadWrapper
 
 
+@dataclass
 class TokenReader:
     file: _ReadWrapper
 
-    completed_tokens: list[str]
-    curr_token: str
-
-    def __init__(self, file: _ReadWrapper) -> None:
-        self.file = file
-
-        self.completed_tokens = []
-        self.curr_token = ""
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
-        self.close()
-
-    def close(self) -> None:
-        self.file.close()
+    def __post_init__(self) -> None:
+        self.completed_tokens: list[str] = []
+        self.curr_token: str = ""
 
     def read(self) -> str:
         """
@@ -135,32 +164,21 @@ class TokenReader:
         return result
 
 
-def open_pipe_reader(path: str) -> TokenReader:
-    return TokenReader(_PipeReadWrapper(path))
+@contextmanager
+def open_pipe_reader(path: str) -> Generator[TokenReader, None, None]:
+    with open_fd(path, Mode.R) as fd:
+        yield TokenReader(_PipeReadWrapper(fd))
 
 
-def accept_connection(server: socket.socket) -> TokenReader:
-    return TokenReader(_SocketRecvWrapper(server))
+@contextmanager
+def accept_connection(server: socket.socket) -> Generator[TokenReader, None, None]:
+    with server.accept()[0] as connection:
+        yield TokenReader(_SocketRecvWrapper(connection))
 
 
+@dataclass
 class TokenWriter:
     fd: int
-    is_open: bool
-
-    def __init__(self, path: str) -> None:
-        self.fd = os.open(path, os.O_WRONLY)
-        self.is_open = True
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
-        self.close()
-
-    def close(self) -> None:
-        if self.is_open:
-            os.close(self.fd)
-            self.is_open = False
 
     def write(self, tokens: list[str]) -> None:
         """
@@ -178,5 +196,7 @@ class TokenWriter:
         return token.replace("\\", "\\\\").replace("\n", "\\n")
 
 
-def open_pipe_writer(path: str) -> TokenWriter:
-    return TokenWriter(path)
+@contextmanager
+def open_pipe_writer(path: str) -> Generator[TokenWriter, None, None]:
+    with open_fd(path, Mode.W) as fd:
+        yield TokenWriter(fd)

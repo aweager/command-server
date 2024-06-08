@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from .model import SupportedSignal
+from .model import Stdio, SupportedSignal
 
 
 @dataclass
@@ -21,11 +21,7 @@ class SignalWorkItem:
 
 @dataclass
 class ReloadExecutor:
-    dir: str
-    stdin: str
-    stdout: str
-    stderr: str
-    response_pipe: str
+    stdio: Stdio
 
 
 Operation = AddWorkItem | CompleteWorkItem | SignalWorkItem | ReloadExecutor

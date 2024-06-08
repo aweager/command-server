@@ -1,5 +1,4 @@
 import socket
-import io
 import queue
 import logging
 
@@ -51,10 +50,7 @@ class SocketListener:
                         self.work_items[self.last_request_id] = WorkItem(
                             id=self.last_request_id,
                             dir=request.dir,
-                            stdin=request.stdin,
-                            stdout=request.stdout,
-                            stderr=request.stderr,
-                            response_pipe=request.response_pipe,
+                            stdio=request.stdio,
                             command=request.command,
                         )
                         self.ops_queue.put(AddWorkItem(self.last_request_id))
@@ -65,22 +61,16 @@ class SocketListener:
                         self.poll_fifo(ops_fifo)
                     case ReloadRequest():
                         self.logger.error(f"Recevied reload request: {request}")
-                        self.ops_queue.put(
-                            ReloadExecutor(
-                                dir=request.dir,
-                                stdin=request.stdin,
-                                stdout=request.stdout,
-                                stderr=request.stderr,
-                                response_pipe=request.response_pipe,
-                            )
-                        )
+                        self.ops_queue.put(ReloadExecutor(request.args))
                         self.poll_fifo(ops_fifo)
+                    case _:
+                        pass
 
     def poll_fifo(self, ops_fifo: TokenWriter) -> None:
         ops_fifo.write(["poll"])
         self.logger.warning("Polled ops fifo")
 
-    def read_next_request(self, server: socket.socket) -> Request:
+    def read_next_request(self, server: socket.socket) -> None | Request:
         with token_io.accept_connection(server) as reader:
             self.logger.warning("Received connection")
             verb = reader.read()
@@ -101,7 +91,7 @@ class SocketListener:
             self.logger.error(f"Call has {len(body)} lines: {body}")
             return None
 
-        dir, stdin, stdout, stderr, response_pipe, num_args_as_str = body
+        dir, stdin, stdout, stderr, status_pipe, num_args_as_str = body
 
         num_args: int
         try:
@@ -118,10 +108,12 @@ class SocketListener:
 
         return CallRequest(
             dir,
-            stdin,
-            stdout,
-            stderr,
-            response_pipe,
+            Stdio(
+                stdin,
+                stdout,
+                stderr,
+                status_pipe,
+            ),
             command,
         )
 
@@ -149,15 +141,16 @@ class SocketListener:
         return SignalRequest(id=id, signal=signal)
 
     def read_reload_request(self, reader: TokenReader) -> None | ReloadRequest:
-        body = reader.read_multiple(5)
-        if len(body) != 5:
+        body = reader.read_multiple(4)
+        if len(body) != 4:
             self.logger.error(f"Reload has {len(body)} lines")
             return None
 
         return ReloadRequest(
-            dir=body[0],
-            stdin=body[1],
-            stdout=body[2],
-            stderr=body[3],
-            response_pipe=body[4],
+            Stdio(
+                stdin=body[0],
+                stdout=body[1],
+                stderr=body[2],
+                status_pipe=body[3],
+            )
         )

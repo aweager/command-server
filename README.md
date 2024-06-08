@@ -26,7 +26,7 @@ call
 <stdin>
 <stdout>
 <stderr>
-<response-pipe>
+<status-pipe>
 <num-command-args>
 <command>...
 ```
@@ -34,13 +34,13 @@ call
 - `dir`: the working directory to use for the command
 - `stdin, stdout, stderr`: files to use for standard IO when executing the
   request
-- `response-pipe`: the pipe to write to to communicate to the client
+- `status-pipe`: the pipe to write to to communicate to the client
 - `num-command-args`: the number of lines to read for the `command`
 - `command`: the actual request to execute (one or more lines)
 
 To ack the request, the server writes an identifier representing the call into
-the `response-pipe`, followed by a newline. Once the command is completed,
-the server writes the status code to the `response-pipe`, again followed by a
+the `status-pipe`, followed by a newline. Once the command is completed,
+the server writes the status code to the `status-pipe`, again followed by a
 newline.
 
 ### sig
@@ -64,21 +64,19 @@ are supported:
 
 ```
 reload
-<dir>
 <stdin>
 <stdout>
 <stderr>
-<response-pipe>
+<status-pipe>
 ```
 
-Instructs the server to reload its configuration, and use that configuration for
-all future requests.
+Instructs the server to reload its configuration.
 
 ## Implementation
 
 To simplify implementation of the protocol, the server binary makes use of an
 adapter pattern with an "executor" coprocess which dispatches commands
-written to its standard input.
+written to a named pipe.
 
 ### Executor API
 
@@ -93,7 +91,7 @@ In a loop, the executor reads on standard input:
 <stdin>
 <stdout>
 <stderr>
-<response-pipe>
+<status-pipe>
 <num-command-args>
 <command>...
 ```
