@@ -18,9 +18,9 @@ execute_command () {
         " "$sig"
     done
 
-    "$@"
-    #CHILD_PID="$!"
-    #wait "$CHILD_PID"
+    "$@" &
+    CHILD_PID="$!"
+    wait "$CHILD_PID"
     exit $?
 }
 
