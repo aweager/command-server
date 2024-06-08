@@ -1,11 +1,12 @@
 from contextlib import contextmanager
+import pathlib
 import subprocess
 import queue
 import os
 import logging
 import sys
 import threading
-from typing import Generator, Optional, Tuple
+from typing import Generator, Optional
 
 from .server_config import ExecutorConfig
 from .model import *
@@ -53,13 +54,15 @@ class Executor:
 
 @contextmanager
 def make_executor(
-    executor_command: list[str], stdio: Stdio, ops_fifo_path: str
+    working_dir: str, executor_command: list[str], stdio: Stdio, ops_fifo_path: str
 ) -> Generator[Executor, None, None]:
     with token_io.open_fds(
         (stdio.stdin, Mode.R), (stdio.stdout, Mode.W), (stdio.stderr, Mode.W)
     ) as stdio_fds:
         with token_io.mkfifo() as coproc_in_path, token_io.mkfifo() as coproc_out_path:
+            os.environ["COMMAND_SERVER_LIB"] = str(pathlib.Path(__file__).parent)
             with subprocess.Popen(
+                cwd=working_dir,
                 args=executor_command
                 + [coproc_in_path, coproc_out_path, ops_fifo_path],
                 stdin=stdio_fds[0],
@@ -131,7 +134,10 @@ class ExecutorManager:
                     break
 
                 with make_executor(
-                    self.config.command, load_stdio, self.ops_fifo_path
+                    self.config.working_dir,
+                    self.config.command,
+                    load_stdio,
+                    self.ops_fifo_path,
                 ) as executor:
                     while True:
                         _LOGGER.debug("Reading from ops fifo")
@@ -208,7 +214,7 @@ class ExecutorManager:
 
     def reload_config(self, reload_stdio: Stdio) -> Optional[ExecutorConfig]:
         try:
-            return server_config.parse_config(sys.argv[1:]).executor_config
+            return server_config.parse_config(sys.argv).executor_config
         except Exception as ex:
             with token_io.open_pipe_writer(
                 reload_stdio.stderr

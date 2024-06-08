@@ -1,5 +1,10 @@
 #!/bin/zsh
 
+0="${ZERO:-${${0:#$ZSH_ARGZERO}:-${(%):-%N}}}"
+0="${${(M)0:#/*}:-$PWD/$0}"
+
+typeset -gH COMMAND_SERVER_LIB="${0:a:h}"
+
 zmodload zsh/zutil
 zmodload zsh/net/socket
 zmodload -F zsh/stat b:zstat
@@ -206,7 +211,7 @@ function command-server-start() {
             __command-server-forward-stdio
         fi
 
-        ./command_server.py \
+        PYTHONPATH="${COMMAND_SERVER_LIB}/.." python3 "${COMMAND_SERVER_LIB}/../command_server.py" \
             "$command_server_args[@]" \
             "$stdin" \
             "$stdout" \
@@ -360,6 +365,7 @@ function __command-server-forward-fds() {
                 "PTY,sane,link=$link"
             )
 
+            socat "$socat_args[@]" &> /dev/null &
             pids+=($!)
 
             for fd in "$fds[@]"; do

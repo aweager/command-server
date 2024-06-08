@@ -1,7 +1,8 @@
 from configparser import ConfigParser
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 from dataclasses import dataclass
 import logging
+import os
 from typing import Optional
 import pathlib
 import shlex
@@ -17,6 +18,7 @@ class SignalTranslations:
 
 @dataclass
 class ExecutorConfig:
+    working_dir: str
     command: list[str]
     max_concurrency: int
     signal_translations: SignalTranslations
@@ -30,7 +32,33 @@ class CommandServerConfig:
     executor_config: ExecutorConfig
 
 
-def parse_config(args: list[str]) -> CommandServerConfig:
+@dataclass
+class _ConfigFilePath:
+    dir: Optional[pathlib.Path]
+
+    def maybe_relative(self, path_str: Optional[str]) -> Optional[pathlib.Path]:
+        if not path_str:
+            return None
+
+        input_path = pathlib.Path(path_str).expanduser()
+        if input_path.is_absolute() or self.dir is None:
+            return input_path
+
+        return self.dir.joinpath(input_path)
+
+
+class _ArgNamespace(Namespace):
+    config_file: Optional[pathlib.Path]
+    max_concurrency: Optional[int]
+    socket_address: Optional[pathlib.Path]
+    stdin: pathlib.Path
+    stdout: pathlib.Path
+    stderr: pathlib.Path
+    status_pipe: pathlib.Path
+    command: list[str]
+
+
+def _parse_args(argv: list[str]) -> _ArgNamespace:
     arg_parser = ArgumentParser(
         prog="command_server.py",
         description="Server to run commands in a different environment",
@@ -69,48 +97,89 @@ def parse_config(args: list[str]) -> CommandServerConfig:
         "command", nargs="*", help="Command to run when (re)starting the executor"
     )
 
-    arg_result = arg_parser.parse_args(args)
+    return arg_parser.parse_args(argv[1:], _ArgNamespace())
+
+
+@dataclass
+class _ConfigFile:
+    # [core]
+    socket_address: Optional[pathlib.Path] = None
+    max_concurrency: Optional[int] = None
+    log_level: Optional[str] = None
+
+    # [executor]
+    working_dir: Optional[pathlib.Path] = None
+    command: Optional[list[str]] = None
+
+    # [signal_translations]
+    signal_translations: Optional[SignalTranslations] = None
+
+
+def _parse_file(path: Optional[pathlib.Path]):
+    if not path:
+        return _ConfigFile()
 
     config_parser = ConfigParser()
-    if arg_result.config_file:
-        config_parser.read(arg_result.config_file)
+    config_parser.read(path)
+    config_dir = _ConfigFilePath(path.parent)
 
-    max_concurrency = arg_result.max_concurrency or config_parser.getint(
-        "core", "max_concurrency", fallback=sys.maxsize
-    )
-
-    signal_mapping: dict[SupportedSignal, SupportedSignal] = dict()
+    signal_translations: Optional[SignalTranslations] = None
     if config_parser.has_section("signal_translations"):
+        signal_mapping: dict[SupportedSignal, SupportedSignal] = dict()
         for key, value in config_parser["signal_translations"].items():
             signal_mapping[SupportedSignal[key.upper()]] = SupportedSignal[
                 value.upper()
             ]
-    signal_translations = SignalTranslations(signal_mapping)
+        signal_translations = SignalTranslations(signal_mapping)
 
-    executor_config = ExecutorConfig(
-        arg_result.command or shlex.split(config_parser["executor"]["command"]),
-        max_concurrency,
-        signal_translations,
+    command: Optional[list[str]]
+    match config_parser.get("executor", "command", fallback=None):
+        case str() as command_str:
+            command = shlex.split(command_str)
+        case _:
+            command = None
+
+    return _ConfigFile(
+        signal_translations=signal_translations,
+        command=command,
+        max_concurrency=config_parser.getint("core", "max_concurrency", fallback=None),
+        log_level=config_parser.get("core", "log_level", fallback=None),
+        socket_address=config_dir.maybe_relative(
+            config_parser.get("core", "socket_address", fallback=None)
+        ),
+        working_dir=config_dir.maybe_relative(
+            config_parser.get("executor", "working_dir", fallback=None)
+        ),
     )
-    socket_address: Optional[str] = str(arg_result.socket_address) or config_parser.get(
-        "core", "socket_address"
-    )
+
+
+def parse_config(argv: list[str]) -> CommandServerConfig:
+    args = _parse_args(argv)
+    file = _parse_file(args.config_file)
+
+    socket_address = args.socket_address or file.socket_address
     if not socket_address:
-        raise RuntimeError("No socket address specified in args or config")
+        raise RuntimeError("No socket address specified in args or config file")
 
-    log_level = logging.getLevelNamesMapping()[
-        arg_result.log_level
-        or config_parser.get("core", "log_level", fallback="WARNING")
-    ]
+    command = args.command or file.command
+    if not command:
+        raise RuntimeError("No executor command specified in args or config file")
 
     return CommandServerConfig(
-        socket_address=socket_address,
-        log_level=log_level,
-        executor_config=executor_config,
+        socket_address=str(socket_address),
+        log_level=logging.getLevelNamesMapping()[
+            args.log_level or file.log_level or "WARNING"
+        ],
+        executor_config=ExecutorConfig(
+            command=command,
+            working_dir=str(file.working_dir or os.getcwd()),
+            max_concurrency=args.max_concurrency or file.max_concurrency or sys.maxsize,
+            signal_translations=file.signal_translations or SignalTranslations(dict()),
+        ),
         initial_load_stdio=Stdio(
-            str(arg_result.stdin),
-            str(arg_result.stdout),
-            str(arg_result.stderr),
-            str(arg_result.status_pipe),
+            str(args.stdin),
+            str(args.stdout),
+            str(args.stderr),
+            str(args.status_pipe),
         ),
     )

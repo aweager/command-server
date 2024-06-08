@@ -11,4 +11,4 @@ printf '%s\n' "$WHAT_I_READ" >&2
 echo "Entering the executor loop!"
 
 set -- "" "$@"
-. "lib/posix-executor-loop.sh"
+. "${COMMAND_SERVER_LIB}/posix-executor-loop.sh"
