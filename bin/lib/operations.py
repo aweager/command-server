@@ -24,4 +24,11 @@ class ReloadExecutor:
     stdio: Stdio
 
 
-Operation = AddWorkItem | CompleteWorkItem | SignalWorkItem | ReloadExecutor
+@dataclass
+class TerminateServer:
+    pass
+
+
+Operation = (
+    AddWorkItem | CompleteWorkItem | SignalWorkItem | ReloadExecutor | TerminateServer
+)

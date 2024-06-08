@@ -1,6 +1,7 @@
 from configparser import ConfigParser
 from argparse import ArgumentParser
 from dataclasses import dataclass
+import logging
 from typing import Optional
 import pathlib
 import shlex
@@ -23,6 +24,7 @@ class ExecutorConfig:
 
 @dataclass
 class CommandServerConfig:
+    log_level: int
     socket_address: str
     initial_load_stdio: Stdio
     executor_config: ExecutorConfig
@@ -40,6 +42,7 @@ def parse_config(args: list[str]) -> CommandServerConfig:
         type=pathlib.Path,
         help="Configuration file to base the server on",
     )
+    arg_parser.add_argument("--log-level", help="Log level, defaults to WARNING")
     arg_parser.add_argument(
         "--max-concurrency", type=int, help="Maximum number of concurrent requests"
     )
@@ -95,8 +98,14 @@ def parse_config(args: list[str]) -> CommandServerConfig:
     if not socket_address:
         raise RuntimeError("No socket address specified in args or config")
 
+    log_level = logging.getLevelNamesMapping()[
+        arg_result.log_level
+        or config_parser.get("core", "log_level", fallback="WARNING")
+    ]
+
     return CommandServerConfig(
         socket_address=socket_address,
+        log_level=log_level,
         executor_config=executor_config,
         initial_load_stdio=Stdio(
             str(arg_result.stdin),

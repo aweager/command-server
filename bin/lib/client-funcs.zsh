@@ -160,28 +160,42 @@ function command-server-start() {
             __command-server-cleanup
         ' EXIT
 
-        local -a arg_background arg_concurrency arg_log_file
+        local -a arg_background arg_log_file arg_log_level arg_socket_address arg_config_file
         zparseopts -D -- \
             {b,-background}=arg_background \
-            -max-concurrency:=arg_concurrency \
-            -log-file:=arg_log_file
-
-        local socket="$1"
-        shift
+            -log-file:=arg_log_file \
+            -log-level:=arg_log_level \
+            -socket-address:=arg_socket_address \
+            -config-file:=arg_config_file
 
         local backgrounded=""
         if [[ -n $arg_background ]]; then
             backgrounded=1
         fi
 
-        local max_concurrency="-1"
-        if [[ -n $arg_concurrency ]]; then
-            max_concurrency="$arg_concurrency[-1]"
-        fi
-
         local log_file="/dev/null"
         if [[ -n $arg_log_file ]]; then
             log_file="$arg_log_file[-1]"
+        fi
+
+        local -a command_server_args=()
+
+        if [[ -n $arg_log_level ]]; then
+            command_server_args+=(
+                --log-level "$arg_log_level[-1]"
+            )
+        fi
+
+        if [[ -n $arg_socket_address ]]; then
+            command_server_args+=(
+                --socket-address "$arg_socket_address[-1]"
+            )
+        fi
+
+        if [[ -n $arg_config_file ]]; then
+            command_server_args+=(
+                --config-file "$arg_config_file[-1]"
+            )
         fi
 
         local stdin stdout stderr status_pipe
@@ -193,13 +207,11 @@ function command-server-start() {
         fi
 
         ./command_server.py \
-            "$socket" \
-            "$max_concurrency" \
+            "$command_server_args[@]" \
             "$stdin" \
             "$stdout" \
             "$stderr" \
-            "$status_pipe" \
-            "$@" &> "$log_file" &
+            "$status_pipe" &> "$log_file" &
         server_pid="$!"
 
         if [[ -n $backgrounded ]]; then
@@ -209,7 +221,14 @@ function command-server-start() {
             return $result
         fi
     } "$@"
+}
 
+function command-server-terminate() {
+    setopt local_options local_traps err_return
+
+    __command-server-raw-send \
+        "$1" \
+        term
 }
 
 function __command-server-raw-send() {
@@ -341,7 +360,6 @@ function __command-server-forward-fds() {
                 "PTY,sane,link=$link"
             )
 
-            socat "$socat_args[@]" &> log.txt &
             pids+=($!)
 
             for fd in "$fds[@]"; do

@@ -4,6 +4,7 @@ import queue
 import os
 import logging
 import sys
+import threading
 from typing import Generator, Optional, Tuple
 
 from .server_config import ExecutorConfig
@@ -29,7 +30,7 @@ class Executor:
         self.coproc_out = coproc_out
 
     def start_work_item(self, work_item: WorkItem) -> int:
-        _LOGGER.warning(f"Starting work item: {work_item}")
+        _LOGGER.debug(f"Starting work item: {work_item}")
 
         self.coproc_in.write(
             [
@@ -44,7 +45,7 @@ class Executor:
             + work_item.command
         )
 
-        _LOGGER.warning("Reading pid")
+        _LOGGER.debug("Reading pid")
 
         pid = int(self.coproc_out.read())
         return pid
@@ -65,14 +66,14 @@ def make_executor(
                 stdout=stdio_fds[1],
                 stderr=stdio_fds[2],
             ) as coproc:
-                _LOGGER.warning(f"stdio: {stdio_fds}")
+                _LOGGER.debug(f"stdio: {stdio_fds}")
                 try:
                     with token_io.open_pipe_writer(
                         coproc_in_path,
                     ) as coproc_in, token_io.open_pipe_reader(
                         coproc_out_path
                     ) as coproc_out:
-                        _LOGGER.warning(f"in {coproc_in}, out {coproc_out}")
+                        _LOGGER.debug(f"in {coproc_in}, out {coproc_out}")
                         is_ready = coproc_out.read()
                         with token_io.open_pipe_writer(
                             stdio.status_pipe
@@ -98,6 +99,7 @@ class ExecutorManager:
     ops_queue: queue.Queue[Operation]
     ops_fifo_path: str
     config: ExecutorConfig
+    terminate_event: threading.Event
 
     waiting_work_items: list[int]
     active_work_items: dict[int, int]
@@ -108,31 +110,36 @@ class ExecutorManager:
         ops_queue: queue.Queue[Operation],
         ops_fifo_path: str,
         config: ExecutorConfig,
+        terminate_event: threading.Event,
     ) -> None:
         self.work_items = work_items
         self.ops_queue = ops_queue
         self.ops_fifo_path = ops_fifo_path
         self.config = config
+        self.terminate_event = terminate_event
 
         self.waiting_work_items = list()
         self.active_work_items = dict()
-        _LOGGER.setLevel(logging.INFO)
 
     def loop(self, load_stdio: Stdio) -> None:
-        _LOGGER.error(f"Ops fifo is {self.ops_fifo_path}")
+        _LOGGER.debug(f"Ops fifo is {self.ops_fifo_path}")
 
         with token_io.open_pipe_reader(self.ops_fifo_path) as ops_fifo:
             while True:
+                if self.terminate_event.is_set():
+                    self.interrupt_waiting_work_items()
+                    break
+
                 with make_executor(
                     self.config.command, load_stdio, self.ops_fifo_path
                 ) as executor:
                     while True:
-                        _LOGGER.warning("Reading from ops fifo")
+                        _LOGGER.debug("Reading from ops fifo")
                         op_line = ops_fifo.read()
-                        _LOGGER.warning(f"Got an op line: {op_line}")
+                        _LOGGER.debug(f"Got an op line: {op_line}")
                         operation = self.parse_op(op_line)
                         if operation:
-                            _LOGGER.error(f"Got operation {operation}")
+                            _LOGGER.debug(f"Got operation {operation}")
                             match operation:
                                 case AddWorkItem(id):
                                     self.add_work_item(id)
@@ -146,10 +153,14 @@ class ExecutorManager:
                                         self.config = new_config
                                         load_stdio = operation.stdio
                                         break
+                                case TerminateServer():
+                                    break
                         else:
-                            _LOGGER.error(f"Received invalid operation")
+                            _LOGGER.info(f"Received invalid operation: {op_line}")
 
                         self.maybe_start_work_item(executor)
+
+        _LOGGER.info("Executor shutting down")
 
     def add_work_item(self, id: int) -> None:
         if id in self.work_items:
@@ -180,14 +191,14 @@ class ExecutorManager:
         pid = executor.start_work_item(self.work_items[id])
         if pid != -1:
             self.active_work_items[id] = pid
-        _LOGGER.warning(f"Work item {id} -> {pid}")
+        _LOGGER.debug(f"Work item {id} -> {pid}")
 
     def signal_work_item(self, id: int, signal: SupportedSignal) -> None:
         if signal in self.config.signal_translations.mapping:
             signal = self.config.signal_translations.mapping[signal]
         if id in self.active_work_items:
             pid = self.active_work_items[id]
-            _LOGGER.warning(f"Signaling job {id}, pid {pid} with {signal}")
+            _LOGGER.debug(f"Signaling job {id}, pid {pid} with {signal}")
             os.kill(pid, signal.value)
         elif id in self.work_items:
             work_item = self.work_items[id]
@@ -207,6 +218,17 @@ class ExecutorManager:
                 stderr.write([f"Failed to parse config on reload: {ex}"])
                 status_pipe.write(["127"])
                 return None
+
+    def interrupt_waiting_work_items(self) -> None:
+        _LOGGER.info("Cancelling pending work items")
+        for id in self.waiting_work_items:
+            if id in self.work_items:
+                work_item = self.work_items[id]
+                _LOGGER.debug(f"Interrupting work item: {work_item}")
+                with token_io.open_pipe_writer(
+                    self.work_items[id].stdio.status_pipe
+                ) as status_pipe:
+                    status_pipe.write([str(128 + SupportedSignal.INT.value)])
 
     def parse_op(self, op_line: str) -> None | Operation:
         if op_line == "poll":

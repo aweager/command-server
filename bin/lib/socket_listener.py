@@ -1,6 +1,7 @@
 import socket
 import queue
 import logging
+import threading
 
 from .requests import *
 from .operations import *
@@ -8,15 +9,17 @@ from .model import *
 from .token_io import TokenWriter, TokenReader
 from . import token_io
 
+_LOGGER = logging.getLogger(__name__)
+
 
 class SocketListener:
     sock_addr: str
     ops_fifo_path: str
     ops_queue: queue.Queue[Operation]
     work_items: dict[int, WorkItem]
+    terminate_event: threading.Event
 
     last_request_id: int
-    logger: logging.Logger
 
     def __init__(
         self,
@@ -24,28 +27,33 @@ class SocketListener:
         ops_fifo_path: str,
         ops_queue: queue.Queue[Operation],
         work_items: dict[int, WorkItem],
+        terminate_event: threading.Event,
     ) -> None:
         self.sock_addr = sock_addr
         self.ops_fifo_path = ops_fifo_path
         self.ops_queue = ops_queue
         self.work_items = work_items
+        self.terminate_event = terminate_event
 
         self.last_request_id = 0
-        self.logger = logging.getLogger("SocketListener")
-        self.logger.setLevel(logging.INFO)
 
     def loop(self) -> None:
-        self.logger.warning("Listening to socket")
+        _LOGGER.info("Listening to socket")
         with socket.socket(
             socket.AF_UNIX, socket.SOCK_STREAM
         ) as server, token_io.open_pipe_writer(self.ops_fifo_path) as ops_fifo:
             server.bind(self.sock_addr)
             server.listen(1)
             while True:
+                if self.terminate_event.is_set():
+                    self.ops_queue.put(TerminateServer())
+                    self.poll_fifo(ops_fifo)
+                    break
+
                 request = self.read_next_request(server)
                 match request:
                     case CallRequest():
-                        self.logger.error(f"Recevied call request: {request}")
+                        _LOGGER.debug(f"Recevied call request: {request}")
                         self.last_request_id += 1
                         self.work_items[self.last_request_id] = WorkItem(
                             id=self.last_request_id,
@@ -56,23 +64,27 @@ class SocketListener:
                         self.ops_queue.put(AddWorkItem(self.last_request_id))
                         self.poll_fifo(ops_fifo)
                     case SignalRequest():
-                        self.logger.error(f"Recevied signal request: {request}")
+                        _LOGGER.debug(f"Recevied signal request: {request}")
                         self.ops_queue.put(SignalWorkItem(request.id, request.signal))
                         self.poll_fifo(ops_fifo)
                     case ReloadRequest():
-                        self.logger.error(f"Recevied reload request: {request}")
+                        _LOGGER.debug(f"Recevied reload request: {request}")
                         self.ops_queue.put(ReloadExecutor(request.args))
                         self.poll_fifo(ops_fifo)
+                    case TerminateRequest():
+                        _LOGGER.debug(f"Received terminate request: {request}")
+                        self.terminate_event.set()
                     case _:
                         pass
+        _LOGGER.info("Socket listener shutting down")
 
     def poll_fifo(self, ops_fifo: TokenWriter) -> None:
         ops_fifo.write(["poll"])
-        self.logger.warning("Polled ops fifo")
+        _LOGGER.debug("Polled ops fifo")
 
     def read_next_request(self, server: socket.socket) -> None | Request:
         with token_io.accept_connection(server) as reader:
-            self.logger.warning("Received connection")
+            _LOGGER.debug("Received connection")
             verb = reader.read()
             match verb:
                 case "call":
@@ -81,14 +93,16 @@ class SocketListener:
                     return self.read_sig_request(reader)
                 case "reload":
                     return self.read_reload_request(reader)
+                case "term":
+                    return self.read_terminate_request(reader)
                 case _:
                     return None
 
     def read_call_request(self, reader: TokenReader) -> None | CallRequest:
-        self.logger.warning("Reading call")
+        _LOGGER.debug("Reading call")
         body = reader.read_multiple(6)
         if len(body) != 6:
-            self.logger.error(f"Call has {len(body)} lines: {body}")
+            _LOGGER.info(f"Call: invalid request with {len(body)} lines: {body}")
             return None
 
         dir, stdin, stdout, stderr, status_pipe, num_args_as_str = body
@@ -97,11 +111,11 @@ class SocketListener:
         try:
             num_args = int(num_args_as_str)
         except:
-            self.logger.error(f"Num args not an int: {num_args_as_str}")
+            _LOGGER.info(f"Call: num args not an int: {num_args_as_str}")
             return None
 
         if num_args < 1:
-            self.logger.error(f"Num args is < 1: {num_args}")
+            _LOGGER.info(f"Call: num args is < 1: {num_args}")
             return None
 
         command = reader.read_multiple(num_args)
@@ -120,7 +134,7 @@ class SocketListener:
     def read_sig_request(self, reader: TokenReader) -> None | SignalRequest:
         body = reader.read_multiple(2)
         if len(body) != 2:
-            self.logger.error(f"Signal has {len(body)} lines")
+            _LOGGER.info(f"Sig: invalid request has {len(body)} lines: {body}")
             return None
 
         id: int = 0
@@ -143,7 +157,7 @@ class SocketListener:
     def read_reload_request(self, reader: TokenReader) -> None | ReloadRequest:
         body = reader.read_multiple(4)
         if len(body) != 4:
-            self.logger.error(f"Reload has {len(body)} lines")
+            _LOGGER.info(f"Reload: invalid request has {len(body)} lines: {body}")
             return None
 
         return ReloadRequest(
@@ -154,3 +168,6 @@ class SocketListener:
                 status_pipe=body[3],
             )
         )
+
+    def read_terminate_request(self, _: TokenReader) -> None | TerminateRequest:
+        return TerminateRequest()

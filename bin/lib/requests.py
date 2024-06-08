@@ -20,4 +20,9 @@ class ReloadRequest:
     args: Stdio
 
 
-Request = CallRequest | SignalRequest | ReloadRequest
+@dataclass
+class TerminateRequest:
+    pass
+
+
+Request = CallRequest | SignalRequest | ReloadRequest | TerminateRequest
