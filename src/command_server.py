@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 
+import pathlib
+import sys
+
+sys.path = [str(pathlib.Path(__file__).parent)] + sys.path
+
 import sys
 import os
 import queue
 import threading
 
-from lib import server_config
-from lib.server_config import CommandServerConfig
-from lib.requests import *
-from lib.operations import *
-from lib.model import *
-from lib.executor import *
-from lib.socket_listener import *
+from command_server import server_config
+from command_server.server_config import CommandServerConfig
+from command_server.requests import *
+from command_server.operations import *
+from command_server.model import *
+from command_server.executor import *
+from command_server.socket_listener import *
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -1,0 +1,8 @@
+#!/bin/zsh
+
+() {
+    local executable_location="$(whence -p command-server-call)"
+    source "${executable_location:a:h}/../lib/client-funcs.zsh"
+}
+
+command-server-call "$@"

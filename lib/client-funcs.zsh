@@ -211,7 +211,7 @@ function command-server-start() {
             __command-server-forward-stdio
         fi
 
-        PYTHONPATH="${COMMAND_SERVER_LIB}/.." python3 "${COMMAND_SERVER_LIB}/../command_server.py" \
+        python3 "${COMMAND_SERVER_LIB}/../src/command_server.py" \
             "$command_server_args[@]" \
             "$stdin" \
             "$stdout" \

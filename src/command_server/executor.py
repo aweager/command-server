@@ -60,7 +60,9 @@ def make_executor(
         (stdio.stdin, Mode.R), (stdio.stdout, Mode.W), (stdio.stderr, Mode.W)
     ) as stdio_fds:
         with token_io.mkfifo() as coproc_in_path, token_io.mkfifo() as coproc_out_path:
-            os.environ["COMMAND_SERVER_LIB"] = str(pathlib.Path(__file__).parent)
+            os.environ["COMMAND_SERVER_LIB"] = str(
+                pathlib.Path(__file__).parent.parent.parent.joinpath("lib")
+            )
             with subprocess.Popen(
                 cwd=working_dir,
                 args=executor_command
