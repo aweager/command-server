@@ -1,1 +1,5 @@
-../functions/command-server-start
+#!/bin/zsh
+
+source "${0:a:h}/../lib/interactive-client.zsh"
+
+command-server-start-interactive "$@"

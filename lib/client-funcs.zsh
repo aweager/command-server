@@ -9,54 +9,22 @@ zmodload zsh/zutil
 zmodload zsh/net/socket
 zmodload -F zsh/stat b:zstat
 
-function command-server-call() {
+function command-server-call-and-forget() {
     setopt local_options local_traps err_return
 
     local -a fifos
     local -a pids
-    local request_id result
-
-    if [[ -t 0 ]]; then
-        local saved_stty="$(stty -g)"
-    fi
 
     () {
         trap '
-            if [[ -t 0 ]]; then
-                stty "$saved_stty"
-            fi
             __command-server-cleanup
         ' EXIT
-
-        local -a arg_background
-        zparseopts -D -- \
-            {b,-background}=arg_background
 
         local socket="$1"
         shift
 
-        local backgrounded=""
-        if [[ -n $arg_background ]]; then
-            backgrounded=1
-        fi
-
-        local stdin stdout stderr status_pipe
-        if [[ -n "$backgrounded" ]]; then
-            __command-server-forward-stdio -b
-        else
-            local sig
-            for sig in INT TERM QUIT HUP; do
-                trap "
-                    if [[ -n \"\$request_id\" ]]; then
-                        command-server-sig '$socket' \"\$request_id\" '$sig'
-                    fi
-                    IFS= read result < \"\$status_pipe\"
-                    return \$result
-                " "$sig"
-            done
-
-            __command-server-forward-stdio
-        fi
+        local stdin stdout stderr
+        __command-server-forward-stdio-no-tty
 
         __command-server-raw-send \
             "$socket" \
@@ -65,17 +33,9 @@ function command-server-call() {
             "$stdin" \
             "$stdout" \
             "$stderr" \
-            "$status_pipe" \
+            "/dev/null" \
             "$#" \
             "$@"
-
-        if [[ -n $backgrounded ]]; then
-            return 0
-        else
-            IFS="" read request_id < "$status_pipe"
-            IFS="" read result < "$status_pipe"
-            return $result
-        fi
     } "$@"
 }
 
@@ -85,155 +45,6 @@ function command-server-sig() {
         sig \
         "$2" \
         "$3"
-}
-
-function command-server-reload() {
-    setopt local_options local_traps err_return
-
-    local -a fifos
-    local -a pids
-
-    if [[ -t 0 ]]; then
-        local saved_stty="$(stty -g)"
-    fi
-
-    () {
-        trap '
-            if [[ -t 0 ]]; then
-                stty "$saved_stty"
-            fi
-            __command-server-cleanup
-        ' EXIT
-
-        local -a arg_background
-        zparseopts -D -- \
-            {b,-background}=arg_background
-
-        local socket="$1"
-        shift
-
-        local backgrounded=""
-        if [[ -n $arg_background ]]; then
-            backgrounded=1
-        fi
-
-        local stdin stdout stderr status_pipe
-        if [[ -n "$backgrounded" ]]; then
-            __command-server-forward-stdio -b
-        else
-            # TODO: what to do with signals
-            __command-server-forward-stdio
-        fi
-
-        __command-server-raw-send \
-            "$socket" \
-            reload \
-            "$stdin" \
-            "$stdout" \
-            "$stderr" \
-            "$status_pipe"
-
-        if [[ -n $backgrounded ]]; then
-            return 0
-        else
-            IFS="" read result < "$status_pipe"
-            return $result
-        fi
-    } "$@"
-}
-
-function command-server-start() {
-    setopt local_options local_traps err_return
-
-    local -a fifos
-    local -a pids
-    local server_pid
-
-    if [[ -t 0 ]]; then
-        # TODO do this even when stdin is redirected
-        local saved_stty="$(stty -g)"
-    fi
-
-    () {
-        trap '
-            if [[ -t 0 ]]; then
-                stty "$saved_stty"
-            fi
-            if [[ -n "$server_pid" ]]; then
-                echo "Server is running at pid $server_pid"
-            fi
-            __command-server-cleanup
-        ' EXIT
-
-        local -a arg_background arg_log_file arg_log_level arg_socket_address arg_config_file
-        zparseopts -D -- \
-            {b,-background}=arg_background \
-            -log-file:=arg_log_file \
-            -log-level:=arg_log_level \
-            -socket-address:=arg_socket_address \
-            -config-file:=arg_config_file
-
-        local backgrounded=""
-        if [[ -n $arg_background ]]; then
-            backgrounded=1
-        fi
-
-        local log_file="/dev/null"
-        if [[ -n $arg_log_file ]]; then
-            log_file="$arg_log_file[-1]"
-        fi
-
-        local -a command_server_args=()
-
-        if [[ -n $arg_log_level ]]; then
-            command_server_args+=(
-                --log-level "$arg_log_level[-1]"
-            )
-        fi
-
-        if [[ -n $arg_socket_address ]]; then
-            command_server_args+=(
-                --socket-address "$arg_socket_address[-1]"
-            )
-        fi
-
-        if [[ -n $arg_config_file ]]; then
-            command_server_args+=(
-                --config-file "$arg_config_file[-1]"
-            )
-        fi
-
-        local stdin stdout stderr status_pipe
-        if [[ -n "$backgrounded" ]]; then
-            __command-server-forward-stdio -b
-        else
-            # TODO: what to do with signals
-            __command-server-forward-stdio
-        fi
-
-        python3 "${COMMAND_SERVER_LIB}/../src/command_server.py" \
-            "$command_server_args[@]" \
-            "$stdin" \
-            "$stdout" \
-            "$stderr" \
-            "$status_pipe" &> "$log_file" &
-        server_pid="$!"
-
-        if [[ -n $backgrounded ]]; then
-            return 0
-        else
-            IFS="" read result < "$status_pipe"
-            return $result
-        fi
-    } "$@"
-}
-
-function command-server-terminate() {
-    setopt local_options local_traps err_return
-
-    __command-server-raw-send \
-        "$1" \
-        term
 }
 
 function __command-server-raw-send() {
@@ -283,59 +94,62 @@ function __command-server-cleanup() {
     ' EXIT
 }
 
-function __command-server-forward-stdio() {
-    local backgrounded="$1"
+function __command-server-forward-stdio-no-tty() {
+    # Rules:
+    #   - don't forward TTYs (this is a background operation)
+    #       - handled in __command-server-forward-pipe
+    #   - forward stdin on its own
+    #   - when stdout == stderr, forward those togehter
+    #       - that way order of writes is maintained
 
-    if [[ -z "$backgrounded" ]]; then
-        status_pipe="$(mktemp -u)"
-        fifos+=("$status_pipe")
-        mkfifo -m 600 "$status_pipe"
-    else
-        status_pipe="/dev/null"
-    fi
+    __command-server-forward-pipe -u 0
 
-    local stdin_stat stdout_stat stderr_stat
-    __command-server-fd-stat 0; stdin_stat="$REPLY"
+    local stdout_stat stderr_stat
     __command-server-fd-stat 1; stdout_stat="$REPLY"
     __command-server-fd-stat 2; stderr_stat="$REPLY"
 
-    # Rules:
-    #   - when backgrounded, do not forward TTYs
-    #   - forward TTYs together
-    #   - when stdout == stderr, forward those togehter
-    #   - otherwise, forward separately
-    local -A Reply
-    if [[ "$stdin_stat" == "$stdout_stat" && "$stdin_stat" == "$stderr_stat" ]]; then
-        # All stdio is on the same file
-        __command-server-forward-fds "$backgrounded" 0 1 2
-    elif [[ "$stdin_stat" == "$stdout_stat" ]]; then
-        # in and out are the same, err is redirected
-        __command-server-forward-fds "$backgrounded" 0 1
-        __command-server-forward-fds "$backgrounded" 2
-    elif [[ "$stdin_stat" == "$stderr_stat" ]]; then
-        # in and err are the same, out is redirected
-        __command-server-forward-fds "$backgrounded" 0 2
-        __command-server-forward-fds "$backgrounded" 1
-    elif [[ "$stdout_stat" == "$stderr_stat" ]]; then
-        # out and err are the same, in is redirected
-        __command-server-forward-fds "$backgrounded" 1 2
-        __command-server-forward-fds "$backgrounded" 0
+    if [[ "$stdout_stat" == "$stderr_stat" ]]; then
+        __command-server-forward-pipe -U 1
+        stdout="$REPLY"
+        stderr="$REPLY"
     else
-        # all different
-        __command-server-forward-fds "$backgrounded" 0
-        __command-server-forward-fds "$backgrounded" 1
-        __command-server-forward-fds "$backgrounded" 2
+        __command-server-forward-pipe -U 1
+        stdout="$REPLY"
+        __command-server-forward-pipe -U 2
+        stderr="$REPLY"
     fi
-
-    stdin="$Reply[0]"
-    stdout="$Reply[1]"
-    stderr="$Reply[2]"
 }
 
 function __command-server-fd-stat() {
     local -A StatOutput
     zstat -H StatOutput -f "$1"
     REPLY="${StatOutput[inode]}:${StatOutput[rdev]}"
+}
+
+function __command-server-forward-pipe() {
+    if [[ -t $2 ]]; then
+        # do not forward TTYs
+        REPLY="/dev/null"
+        return
+    fi
+
+    # Create the fifo ourselves so we don't have process scheduling race
+    # conditions (it needs to exist when the server gets the request)
+    REPLY="$(mktemp -u)"
+    mkfifo -m 600 "$REPLY"
+    if [[ "$1" == "-u" ]]; then
+        (
+            setopt no_err_return
+            socat "$1" "FD:3" "GOPEN:$REPLY"
+            rm "$REPLY"
+        ) 3<&$2 < /dev/null &> /dev/null &
+    else
+        (
+            setopt no_err_return
+            socat "$1" "FD:3" "PIPE:$REPLY"
+            rm "$REPLY"
+        ) 3>&$2 < /dev/null &> /dev/null &
+    fi
 }
 
 function __command-server-forward-fds() {
@@ -351,6 +165,10 @@ function __command-server-forward-fds() {
                 Reply[$fd]="/dev/null"
             done
         else
+            # TODO - the below works in a subprocess but not as a function
+            #for fd in "$fds[@]"; do
+            #    Reply[$fd]="$TTY"
+            #done
             local -a socat_args
             if [[ "${#fds}" -eq 1 && "$fds[1]" -eq 0 ]]; then
                 socat_args+=("-u")
@@ -359,14 +177,12 @@ function __command-server-forward-fds() {
             fi
 
             local link="$(mktemp -u)"
-            fifos+=("$link")
             socat_args+=(
                 "GOPEN:$TTY,rawer,ignoreeof"
                 "PTY,sane,link=$link"
             )
 
-            socat "$socat_args[@]" &> /dev/null &
-            pids+=($!)
+            socat "$socat_args[@]" &> /dev/null &!
 
             for fd in "$fds[@]"; do
                 Reply[$fd]="$link"
@@ -392,7 +208,6 @@ function __command-server-forward-fds() {
                 socat -U "FD:3" "GOPEN:$fifo" 3>&$fd &> /dev/null &
             fi
 
-            pids+=($!)
             Reply[$fd]="$fifo"
         done
     fi

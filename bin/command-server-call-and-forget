@@ -1,0 +1,11 @@
+#!/bin/zsh
+
+() {
+    local executable_location="$(whence -p command-server-call-and-forget)"
+    if [[ -z "$executable_location" ]]; then
+        executable_location="$1"
+    fi
+    source "${executable_location:a:h}/../lib/client-funcs.zsh"
+} "$0"
+
+command-server-call-and-forget "$@"

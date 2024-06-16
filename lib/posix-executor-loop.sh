@@ -54,11 +54,7 @@ while true; do
     done
 
     (
-        if [ -n "$EXECUTE_COMMAND" ]; then
-            "$EXECUTE_COMMAND" "$@" < "$STDIN" > "$STDOUT" 2> "$STDERR" &
-        else
-            "$@" < "$STDIN" > "$STDOUT" 2> "$STDERR" &
-        fi
+        "$EXECUTE_COMMAND" "$@" < "$STDIN" > "$STDOUT" 2> "$STDERR"
         CHILD_PID="$!"
 
         printf '%s\n' "$CHILD_PID" >&4
