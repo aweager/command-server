@@ -1,65 +1,41 @@
 #!/bin/zsh
 
-0="${ZERO:-${${0:#$ZSH_ARGZERO}:-${(%):-%N}}}"
-0="${${(M)0:#/*}:-$PWD/$0}"
-
-typeset -gH COMMAND_SERVER_LIB="${0:a:h}"
-
-zmodload zsh/zutil
 zmodload zsh/net/socket
 zmodload -F zsh/stat b:zstat
 
 function command-server-call-and-forget() {
-    setopt local_options local_traps err_return
+    setopt local_options err_return
 
-    local -a fifos
-    local -a pids
+    if [[ $# -lt 2 ]]; then
+        printf '%s\n' \
+            'Usage: command-server-call-and-forget <socket> <command> [<args>...]' >&2
+        return 1
+    fi
 
-    () {
-        trap '
-            __command-server-cleanup
-        ' EXIT
+    local socket="$1"
+    shift
 
-        local socket="$1"
-        shift
+    local stdin stdout stderr
+    __command-server-forward-stdio-no-tty
 
-        local stdin stdout stderr
-        __command-server-forward-stdio-no-tty
-
-        __command-server-raw-send \
-            "$socket" \
-            call \
-            "$PWD" \
-            "$stdin" \
-            "$stdout" \
-            "$stderr" \
-            "/dev/null" \
-            "$#" \
-            "$@"
-    } "$@"
-}
-
-function command-server-sig() {
     __command-server-raw-send \
-        "$1" \
-        sig \
-        "$2" \
-        "$3"
+        "$socket" \
+        call \
+        "$PWD" \
+        "$stdin" \
+        "$stdout" \
+        "$stderr" \
+        "/dev/null" \
+        "$#" \
+        "$@"
 }
 
 function __command-server-raw-send() {
-    setopt local_options local_traps err_return
+    setopt local_options err_return
 
     local send_fd
 
-    () {
-        trap '
-            if [[ -n "$send_fd" ]]; then
-                exec {send_fd}>&-
-                send_fd=""
-            fi
-        ' EXIT
-
+    {
         local socket="$1"
         zsocket "$socket"
         send_fd="$REPLY"
@@ -75,23 +51,11 @@ function __command-server-raw-send() {
         done
 
         printf '%s\n' "$escaped_tokens[@]" >&$send_fd
-    } "$@"
-}
-
-function __command-server-cleanup() {
-    trap '
-        local pid
-        for pid in "$pids[@]"; do
-            kill -HUP "$pid" &> /dev/null || true
-        done
-
-        local fifo
-        for fifo in "$fifos[@]"; do
-            if [[ -e $fifo ]]; then
-                rm "$fifo"
-            fi
-        done
-    ' EXIT
+    } always {
+        if [[ -n "$send_fd" ]]; then
+            exec {send_fd}>&-
+        fi
+    }
 }
 
 function __command-server-forward-stdio-no-tty() {
@@ -103,6 +67,7 @@ function __command-server-forward-stdio-no-tty() {
     #       - that way order of writes is maintained
 
     __command-server-forward-pipe -u 0
+    stdin="$REPLY"
 
     local stdout_stat stderr_stat
     __command-server-fd-stat 1; stdout_stat="$REPLY"
@@ -140,75 +105,14 @@ function __command-server-forward-pipe() {
     if [[ "$1" == "-u" ]]; then
         (
             setopt no_err_return
-            socat "$1" "FD:3" "GOPEN:$REPLY"
+            socat "$1" "FD:3" "PIPE:$REPLY"
             rm "$REPLY"
-        ) 3<&$2 < /dev/null &> /dev/null &
+        ) 3<&$2 < /dev/null &> /dev/null &!
     else
         (
             setopt no_err_return
             socat "$1" "FD:3" "PIPE:$REPLY"
             rm "$REPLY"
-        ) 3>&$2 < /dev/null &> /dev/null &
-    fi
-}
-
-function __command-server-forward-fds() {
-    local backgrounded="$1"
-    shift
-    local -a fds=("$@")
-
-    local fd
-
-    if [[ -t "$fds[1]" ]]; then
-        if [[ -n "$backgrounded" ]]; then
-            for fd in "$fds[@]"; do
-                Reply[$fd]="/dev/null"
-            done
-        else
-            # TODO - the below works in a subprocess but not as a function
-            #for fd in "$fds[@]"; do
-            #    Reply[$fd]="$TTY"
-            #done
-            local -a socat_args
-            if [[ "${#fds}" -eq 1 && "$fds[1]" -eq 0 ]]; then
-                socat_args+=("-u")
-            elif [[ "$fds[1]" -ne 0 ]]; then
-                socat_args+=("-U")
-            fi
-
-            local link="$(mktemp -u)"
-            socat_args+=(
-                "GOPEN:$TTY,rawer,ignoreeof"
-                "PTY,sane,link=$link"
-            )
-
-            socat "$socat_args[@]" &> /dev/null &!
-
-            for fd in "$fds[@]"; do
-                Reply[$fd]="$link"
-            done
-
-            while [[ ! -e "$link" ]]; do
-                sleep 0.01
-            done
-
-            stty brkint -ignbrk isig < "$TTY"
-        fi
-    else
-        local direction fifo
-        for fd in "$fds[@]"; do
-
-            fifo="$(mktemp -u)"
-            fifos+=("$fifo")
-            mkfifo -m 600 "$fifo"
-
-            if [[ "$fd" -eq 0 ]]; then
-                socat -u "FD:$fd" "GOPEN:$fifo" &> /dev/null &
-            else
-                socat -U "FD:3" "GOPEN:$fifo" 3>&$fd &> /dev/null &
-            fi
-
-            Reply[$fd]="$fifo"
-        done
+        ) 3>&$2 < /dev/null &> /dev/null &!
     fi
 }

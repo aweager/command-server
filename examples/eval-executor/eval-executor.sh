@@ -9,7 +9,7 @@ echo "Printing back on stderr:"
 printf '%s\n' "$WHAT_I_READ" >&2
 
 run_args_blindly () {
-    "$@" &
+    "$@" <&0 >&1 2>&2 &
 }
 
 echo "Entering the executor loop!"

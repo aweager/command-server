@@ -10,8 +10,4 @@ if [[ $PMSPEC != *b* ]]; then
     export PATH
 fi
 
-autoload -Uz \
-    command-server-call \
-    command-server-reload \
-    command-server-start \
-    command-server-terminate
+autoload -Uz command-server-call-and-forget

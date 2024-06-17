@@ -2,4 +2,5 @@
 
 source "${0:a:h}/../lib/interactive-client.zsh"
 
-command-server-call-interactive "$@"
+command-server-call "$@"
+echo $?

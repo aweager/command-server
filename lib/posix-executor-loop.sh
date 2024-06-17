@@ -54,6 +54,7 @@ while true; do
     done
 
     (
+        cd "$WORKING_DIR"
         "$EXECUTE_COMMAND" "$@" < "$STDIN" > "$STDOUT" 2> "$STDERR"
         CHILD_PID="$!"
 

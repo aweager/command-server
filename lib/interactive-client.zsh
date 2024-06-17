@@ -1,8 +1,5 @@
 #!/bin/zsh
 
-0="${ZERO:-${${0:#$ZSH_ARGZERO}:-${(%):-%N}}}"
-0="${${(M)0:#/*}:-$PWD/$0}"
-
 typeset -gH COMMAND_SERVER_LIB="${0:a:h}"
 
 zmodload zsh/zutil
@@ -11,40 +8,51 @@ zmodload -F zsh/stat b:zstat
 
 source "$COMMAND_SERVER_LIB/client-funcs.zsh"
 
-function command-server-call-interactive() {
+function command-server-call() {
     setopt local_options local_traps err_return
+
+    if [[ $# -lt 2 ]]; then
+        printf '%s\n' \
+            'Usage: command-server-call <socket> <command> [<args>...]' >&2
+        return 1
+    fi
 
     local -a fifos
     local -a pids
     local request_id result
 
     local saved_tty
-    if [[ -t 0 ]]; then
+    if [[ -t 0 || -t 1 || -t 2 ]]; then
         saved_stty="$(stty -g)"
     fi
 
-    () {
-        trap '
-            if [[ -t 0 ]]; then
-                stty "$saved_stty"
-            fi
-            __command-server-cleanup
-        ' EXIT
-
+    {
         local socket="$1"
         shift
 
         local stdin stdout stderr status_pipe
-        local sig
+        local sig sig_return_val
         for sig in INT TERM QUIT HUP; do
+            sig_return_val="$((127 + $signals[(Ie)$sig]))"
             trap "
-                if [[ -n \"\$request_id\" ]]; then
+                echo 'Recevied $sig' >> client.log
+                if [[ -n \"\$result\" ]]; then
+                    return \$result
+                elif [[ -n \"\$request_id\" ]]; then
                     command-server-sig '$socket' \"\$request_id\" '$sig'
+                    IFS= read result < \"\$status_pipe\"
+                    return \$result
+                else
+                    echo 'returning $sig_return_val' >> client.log
+                    return $sig_return_val
                 fi
-                IFS= read result < \"\$status_pipe\"
-                return \$result
             " "$sig"
         done
+
+        echo "Client pid: $$" >> client.log
+        echo kill -INT $$ >> client.log
+        kill -INT $$ 2>> client.log
+        echo tried to kill >> client.log
 
         __command-server-forward-stdio-yes-tty
 
@@ -61,34 +69,37 @@ function command-server-call-interactive() {
 
         IFS="" read request_id < "$status_pipe"
 
+        echo "Waiting for $request_id" >> client.log
+
         IFS="" read result < "$status_pipe"
         return $result
-    } "$@"
+    } always {
+        __command-server-cleanup
+    }
 }
 
-function command-server-reload-interactive() {
+function command-server-reload() {
     setopt local_options local_traps err_return
+
+    if [[ $# -ne 1 ]]; then
+        printf '%s\n' \
+            'Usage: command-server-reload <socket>' >&2
+        return 1
+    fi
 
     local -a fifos
     local -a pids
+    local saved_stty
 
-    if [[ -t 0 ]]; then
-        local saved_stty="$(stty -g)"
+    if [[ -t 0 || -t 1 || -t 2 ]]; then
+        saved_stty="$(stty -g)"
     fi
 
-    () {
-        trap '
-            if [[ -t 0 ]]; then
-                stty "$saved_stty"
-            fi
-            __command-server-cleanup
-        ' EXIT
-
+    {
         local socket="$1"
-        shift
-
         local stdin stdout stderr status_pipe
-        # TODO: what to do with signals
+
+        # TODO signals
         __command-server-forward-stdio-yes-tty
 
         __command-server-raw-send \
@@ -101,30 +112,34 @@ function command-server-reload-interactive() {
 
         IFS="" read result < "$status_pipe"
         return $result
-    } "$@"
+    } always {
+        __command-server-cleanup
+    }
 }
 
-function command-server-start-interactive() {
+function command-server-start() {
     setopt local_options local_traps err_return
 
     local -a fifos
     local -a pids
-    local server_pid
+    local server_pid saved_stty
 
-    if [[ -t 0 ]]; then
-        local saved_stty="$(stty -g)"
+    if [[ -t 0 || -t 1 || -t 2 ]]; then
+        saved_stty="$(stty -g)"
     fi
 
-    () {
-        trap '
-            if [[ -t 0 ]]; then
-                stty "$saved_stty"
-            fi
-            if [[ -n "$server_pid" ]]; then
-                echo "Server is running at pid $server_pid"
-            fi
-            __command-server-cleanup
-        ' EXIT
+    {
+        local sig sig_return_val
+        for sig in INT TERM QUIT HUP; do
+            sig_return_val="$((127 + $signals[(Ie)$sig]))"
+            trap "
+                echo 'Recevied $sig' >> client.log
+                if [[ -n \"\$server_pid\" ]]; then
+                    kill -$sig \$server_pid
+                fi
+                return $sig_return_val
+            " "$sig"
+        done
 
         local -a arg_log_file arg_log_level arg_socket_address arg_config_file
         zparseopts -D -- \
@@ -159,7 +174,6 @@ function command-server-start-interactive() {
         fi
 
         local stdin stdout stderr status_pipe
-        # TODO: what to do with signals
         __command-server-forward-stdio-yes-tty
 
         python3 "${COMMAND_SERVER_LIB}/../src/command_server.py" \
@@ -172,15 +186,58 @@ function command-server-start-interactive() {
 
         IFS="" read result < "$status_pipe"
         return $result
-    } "$@"
+    } always {
+        if [[ -n "$server_pid" ]]; then
+            echo "Server is running at pid $server_pid"
+        fi
+        __command-server-cleanup
+    }
 }
 
 function command-server-terminate() {
     setopt local_options local_traps err_return
 
+    if [[ $# -ne 1 ]]; then
+        printf '%s\n' \
+            'Usage: command-server-terminate <socket>' >&2
+        return 1
+    fi
+
     __command-server-raw-send \
         "$1" \
         term
+}
+
+function command-server-sig() {
+    if [[ $# -ne 3 ]]; then
+        printf '%s\n' \
+            'Usage: command-server-sig <socket> <request-id> <signal>' >&2
+        return 1
+    fi
+
+    __command-server-raw-send \
+        "$1" \
+        sig \
+        "$2" \
+        "$3"
+}
+
+function __command-server-cleanup() {
+    if [[ -n "$saved_stty" ]]; then
+        stty "$saved_stty"
+    fi
+
+    local pid
+    for pid in "$pids[@]"; do
+        kill -HUP "$pid" &> /dev/null || true
+    done
+
+    local fifo
+    for fifo in "$fifos[@]"; do
+        if [[ -e $fifo ]]; then
+            rm "$fifo"
+        fi
+    done
 }
 
 function __command-server-forward-stdio-yes-tty() {
@@ -226,30 +283,29 @@ function __command-server-forward-stdio-yes-tty() {
 }
 
 function __command-server-forward-fds() {
-    local -a fds=("$@")
     local fd
 
-    if [[ -t "$fds[1]" ]]; then
+    if [[ -t "$1" ]]; then
+        local link="$(mktemp -u)"
+        fifos+=("$link")
+        for fd; do
+            Reply[$fd]="$link"
+        done
+
         local -a socat_args
-        if [[ "${#fds}" -eq 1 && "$fds[1]" -eq 0 ]]; then
+        if [[ "$#" -eq 1 && "$1" -eq 0 ]]; then
             socat_args+=("-u")
-        elif [[ "$fds[1]" -ne 0 ]]; then
+        elif [[ "$1" -ne 0 ]]; then
             socat_args+=("-U")
         fi
 
-        local link="$(mktemp -u)"
-        fifos+=("$link")
         socat_args+=(
             "GOPEN:$TTY,rawer,ignoreeof"
             "PTY,sane,link=$link"
         )
 
-        socat "$socat_args[@]" &> /dev/null &!
+        socat "$socat_args[@]" &> /dev/null &
         pids+=($!)
-
-        for fd in "$fds[@]"; do
-            Reply[$fd]="$link"
-        done
 
         # TODO better way of ensuring link exists
         while [[ ! -e "$link" ]]; do
@@ -258,21 +314,19 @@ function __command-server-forward-fds() {
 
         stty brkint -ignbrk isig < "$TTY"
     else
-        local direction fifo
-        for fd in "$fds[@]"; do
-
+        local fifo
+        for fd; do
             fifo="$(mktemp -u)"
             fifos+=("$fifo")
             mkfifo -m 600 "$fifo"
+            Reply[$fd]="$fifo"
 
             if [[ "$fd" -eq 0 ]]; then
                 socat -u "FD:$fd" "GOPEN:$fifo" &> /dev/null &
             else
                 socat -U "FD:3" "GOPEN:$fifo" 3>&$fd &> /dev/null &
             fi
-
             pids+=($!)
-            Reply[$fd]="$fifo"
         done
     fi
 }
