@@ -10,14 +10,15 @@
 
 # Reads a newline-terminated token, handling \\ and \n escape sequences
 read_token () {
-    # First sed command handles \n at start of the line
-    # Second handles \n when not preceded by \
-    # Third handles \\
     IFS= read -r REPLY <&3
+
+    # First sed command handles \n preceded by an odd number of \ and the start of the line
+    # Second handles \n when preceded by an odd number of \
+    # Third handles \\
     REPLY="$( \
         printf '%s' "$REPLY" | \
-            sed -e 's ^\\n \n ' \
-                -e 's \([^\\]\)\\n \1\n g' \
+            sed -e 's ^\(\(\\\\\)*\)\\n \1\n ' \
+                -e 's \([^\\]\)\(\(\\\\\)*\)\\n \1\2\n g' \
                 -e 's \\\\ \\ g';
         echo x)"
     REPLY="${REPLY%?}"
