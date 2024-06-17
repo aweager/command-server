@@ -35,7 +35,6 @@ function command-server-call() {
         for sig in INT TERM QUIT HUP; do
             sig_return_val="$((127 + $signals[(Ie)$sig]))"
             trap "
-                echo 'Recevied $sig' >> client.log
                 if [[ -n \"\$result\" ]]; then
                     return \$result
                 elif [[ -n \"\$request_id\" ]]; then
@@ -43,19 +42,12 @@ function command-server-call() {
                     IFS= read result < \"\$status_pipe\"
                     return \$result
                 else
-                    echo 'returning $sig_return_val' >> client.log
                     return $sig_return_val
                 fi
             " "$sig"
         done
 
-        echo "Client pid: $$" >> client.log
-        echo kill -INT $$ >> client.log
-        kill -INT $$ 2>> client.log
-        echo tried to kill >> client.log
-
         __command-server-forward-stdio-yes-tty
-
         __command-server-raw-send \
             "$socket" \
             call \
@@ -68,9 +60,6 @@ function command-server-call() {
             "$@"
 
         IFS="" read request_id < "$status_pipe"
-
-        echo "Waiting for $request_id" >> client.log
-
         IFS="" read result < "$status_pipe"
         return $result
     } always {
@@ -120,6 +109,8 @@ function command-server-reload() {
 function command-server-start() {
     setopt local_options local_traps err_return
 
+    # TODO an actually useful error message for invalid args
+
     local -a fifos
     local -a pids
     local server_pid saved_stty
@@ -133,7 +124,6 @@ function command-server-start() {
         for sig in INT TERM QUIT HUP; do
             sig_return_val="$((127 + $signals[(Ie)$sig]))"
             trap "
-                echo 'Recevied $sig' >> client.log
                 if [[ -n \"\$server_pid\" ]]; then
                     kill -$sig \$server_pid
                 fi
@@ -187,10 +177,10 @@ function command-server-start() {
         IFS="" read result < "$status_pipe"
         return $result
     } always {
+        __command-server-cleanup
         if [[ -n "$server_pid" ]]; then
             echo "Server is running at pid $server_pid"
         fi
-        __command-server-cleanup
     }
 }
 
@@ -304,7 +294,7 @@ function __command-server-forward-fds() {
             "PTY,sane,link=$link"
         )
 
-        socat "$socat_args[@]" &> /dev/null &
+        socat "$socat_args[@]" < /dev/null &> /dev/null &
         pids+=($!)
 
         # TODO better way of ensuring link exists

@@ -103,21 +103,22 @@ def _parse_args(argv: list[str]) -> _ArgNamespace:
 @dataclass
 class _ConfigFile:
     # [core]
-    socket_address: Optional[pathlib.Path] = None
-    max_concurrency: Optional[int] = None
-    log_level: Optional[str] = None
+    socket_address: Optional[pathlib.Path]
+    max_concurrency: Optional[int]
+    log_level: Optional[str]
 
     # [executor]
-    working_dir: Optional[pathlib.Path] = None
-    command: Optional[list[str]] = None
+    working_dir: Optional[pathlib.Path]
+    command: Optional[str]
+    args: Optional[list[str]]
 
     # [signal_translations]
-    signal_translations: Optional[SignalTranslations] = None
+    signal_translations: Optional[SignalTranslations]
 
 
 def _parse_file(path: Optional[pathlib.Path]):
     if not path:
-        return _ConfigFile()
+        return _ConfigFile(None, None, None, None, None, None, None)
 
     config_parser = ConfigParser()
     config_parser.read(path)
@@ -132,16 +133,27 @@ def _parse_file(path: Optional[pathlib.Path]):
             ]
         signal_translations = SignalTranslations(signal_mapping)
 
-    command: Optional[list[str]]
+    command: Optional[str]
     match config_parser.get("executor", "command", fallback=None):
         case str() as command_str:
-            command = shlex.split(command_str)
+            if command_str.startswith("./"):
+                command = str(config_dir.maybe_relative(command_str).absolute())  # type: ignore
+            else:
+                command = command_str
         case _:
             command = None
+
+    args: Optional[list[str]]
+    match config_parser.get("executor", "args", fallback=None):
+        case str() as args_str:
+            args = shlex.split(args_str)
+        case _:
+            args = None
 
     return _ConfigFile(
         signal_translations=signal_translations,
         command=command,
+        args=args,
         max_concurrency=config_parser.getint("core", "max_concurrency", fallback=None),
         log_level=config_parser.get("core", "log_level", fallback=None),
         socket_address=config_dir.maybe_relative(
@@ -161,9 +173,10 @@ def parse_config(argv: list[str]) -> CommandServerConfig:
     if not socket_address:
         raise RuntimeError("No socket address specified in args or config file")
 
-    command = args.command or file.command
-    if not command:
-        raise RuntimeError("No executor command specified in args or config file")
+    if not file.command:
+        raise RuntimeError("No executor command specified in config file")
+
+    full_command = [file.command] + (file.args or [])
 
     return CommandServerConfig(
         socket_address=str(socket_address),
@@ -171,7 +184,7 @@ def parse_config(argv: list[str]) -> CommandServerConfig:
             args.log_level or file.log_level or "WARNING"
         ],
         executor_config=ExecutorConfig(
-            command=command,
+            command=full_command,
             working_dir=str(file.working_dir or os.getcwd()),
             max_concurrency=args.max_concurrency or file.max_concurrency or sys.maxsize,
             signal_translations=file.signal_translations or SignalTranslations(dict()),

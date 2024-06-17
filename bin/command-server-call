@@ -3,4 +3,3 @@
 source "${0:a:h}/../lib/interactive-client.zsh"
 
 command-server-call "$@"
-echo $?

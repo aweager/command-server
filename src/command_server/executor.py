@@ -17,6 +17,10 @@ from . import server_config
 
 _LOGGER = logging.getLogger(__name__)
 
+os.environ["COMMAND_SERVER_LIB"] = str(
+    pathlib.Path(__file__).parent.parent.parent.joinpath("lib")
+)
+
 
 class Executor:
     coproc_in: TokenWriter
@@ -56,47 +60,38 @@ class Executor:
 def make_executor(
     working_dir: str, executor_command: list[str], stdio: Stdio, ops_fifo_path: str
 ) -> Generator[Executor, None, None]:
-    with token_io.open_fds(
-        (stdio.stdin, Mode.R), (stdio.stdout, Mode.W), (stdio.stderr, Mode.W)
-    ) as stdio_fds:
-        with token_io.mkfifo() as coproc_in_path, token_io.mkfifo() as coproc_out_path:
-            os.environ["COMMAND_SERVER_LIB"] = str(
-                pathlib.Path(__file__).parent.parent.parent.joinpath("lib")
-            )
-            with subprocess.Popen(
-                cwd=working_dir,
-                args=executor_command
-                + [coproc_in_path, coproc_out_path, ops_fifo_path],
-                stdin=stdio_fds[0],
-                stdout=stdio_fds[1],
-                stderr=stdio_fds[2],
-            ) as coproc:
-                _LOGGER.debug(f"stdio: {stdio_fds}")
-                try:
-                    with token_io.open_pipe_writer(
-                        coproc_in_path,
-                    ) as coproc_in, token_io.open_pipe_reader(
-                        coproc_out_path
-                    ) as coproc_out:
-                        _LOGGER.debug(f"in {coproc_in}, out {coproc_out}")
-                        is_ready = coproc_out.read()
-                        with token_io.open_pipe_writer(
-                            stdio.status_pipe
-                        ) as status_pipe:
-                            if is_ready != "0":
-                                try:
-                                    code = int(is_ready)
-                                except:
-                                    code = 127
-                                status_pipe.write([str(code)])
-                                raise RuntimeError(
-                                    f"Failed to start executor: {is_ready}"
-                                )
-                            else:
-                                status_pipe.write(["0"])
-                        yield Executor(coproc_in, coproc_out)
-                finally:
-                    coproc.terminate()
+    with (
+        token_io.open_fds(
+            (stdio.stdin, Mode.R), (stdio.stdout, Mode.W), (stdio.stderr, Mode.W)
+        ) as stdio_fds,
+        token_io.mkfifo() as coproc_in_path,
+        token_io.mkfifo() as coproc_out_path,
+        subprocess.Popen(
+            cwd=working_dir,
+            args=executor_command + [coproc_in_path, coproc_out_path, ops_fifo_path],
+            stdin=stdio_fds[0],
+            stdout=stdio_fds[1],
+            stderr=stdio_fds[2],
+        ) as coproc,
+        token_io.open_pipe_writer(coproc_in_path) as coproc_in,
+        token_io.open_pipe_reader(coproc_out_path) as coproc_out,
+    ):
+        try:
+            _LOGGER.debug("Coprocess started, waiting on init status")
+            is_ready = coproc_out.read()
+            with token_io.open_pipe_writer(stdio.status_pipe) as status_pipe:
+                if is_ready != "0":
+                    try:
+                        code = int(is_ready)
+                    except:
+                        code = 127
+                    status_pipe.write([str(code)])
+                    raise RuntimeError(f"Failed to start executor: {is_ready}")
+                else:
+                    status_pipe.write(["0"])
+            yield Executor(coproc_in, coproc_out)
+        finally:
+            coproc.terminate()
 
 
 class ExecutorManager:
@@ -193,36 +188,44 @@ class ExecutorManager:
             if id in self.work_items:
                 break
 
-        if not id:
+        if id is None:
             return
 
         pid = executor.start_work_item(self.work_items[id])
         if pid != -1:
             self.active_work_items[id] = pid
+            del self.work_items[id]
         _LOGGER.debug(f"Work item {id} -> {pid}")
 
     def signal_work_item(self, id: int, signal: SupportedSignal) -> None:
         if signal in self.config.signal_translations.mapping:
             signal = self.config.signal_translations.mapping[signal]
+
         if id in self.active_work_items:
             pid = self.active_work_items[id]
             _LOGGER.debug(f"Signaling job {id}, pid {pid} with {signal}")
-            os.kill(pid, signal.value)
+            try:
+                os.kill(pid, signal.value)
+            except Exception as e:
+                # Swallow and log
+                _LOGGER.info(f"Error killing pid {pid}: {e}")
+                pass
         elif id in self.work_items:
+            _LOGGER.debug(f"Simulating signal {signal} for job {id}")
             work_item = self.work_items[id]
             with token_io.open_pipe_writer(work_item.stdio.status_pipe) as status_pipe:
                 status_pipe.write([str(signal.value + 128)])
-            del self.work_items[id]
+        else:
+            _LOGGER.debug(f"Job {id} was already completed")
 
     def reload_config(self, reload_stdio: Stdio) -> Optional[ExecutorConfig]:
         try:
             return server_config.parse_config(sys.argv).executor_config
         except Exception as ex:
-            with token_io.open_pipe_writer(
-                reload_stdio.stderr
-            ) as stderr, token_io.open_pipe_writer(
-                reload_stdio.status_pipe
-            ) as status_pipe:
+            with (
+                token_io.open_pipe_writer(reload_stdio.stderr) as stderr,
+                token_io.open_pipe_writer(reload_stdio.status_pipe) as status_pipe,
+            ):
                 stderr.write([f"Failed to parse config on reload: {ex}"])
                 status_pipe.write(["127"])
                 return None
