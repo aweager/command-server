@@ -2,10 +2,6 @@
 
 execute_command () {
     (
-        echo "In working dir: $PWD" >&2
-        echo "Executing command:"
-        printf '    %s\n' "$@"
-
         trap '
             echo "print-args got TERM" >&2
             if [ -n "$CHILD_PID" ]; then
@@ -28,14 +24,15 @@ execute_command () {
             fi
         ' HUP
 
-        exec "$@"
+        echo "In working dir: $PWD" >&2
+        echo "Received command:"
+        printf '    %s\n' "$@"
     ) &
 }
 
-echo "stdin contains:"
+echo "Welcome to the print executor!"
+echo "Executing cat:"
 cat
 
-echo "stderr" >&2
-
 set -- execute_command "$@"
-. "lib/posix-executor-loop.sh"
+. "${COMMAND_SERVER_LIB}/posix-executor-loop.sh"
