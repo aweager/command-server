@@ -2,7 +2,6 @@
 
 typeset -gH COMMAND_SERVER_LIB="${0:a:h}"
 
-zmodload zsh/zutil
 zmodload zsh/net/socket
 zmodload -F zsh/stat b:zstat
 
@@ -125,53 +124,23 @@ function command-server-start() {
             sig_return_val="$((127 + $signals[(Ie)$sig]))"
             trap "
                 if [[ -n \"\$server_pid\" ]]; then
-                    kill -$sig \$server_pid
+                    printf 'Received SIG%s! Killing server %s\\n' $sig \$server_pid
+                    kill -$sig \$server_pid || true
+                    server_pid=""
                 fi
                 return $sig_return_val
             " "$sig"
         done
 
-        local -a arg_log_file arg_log_level arg_socket_address arg_config_file
-        zparseopts -D -- \
-            -log-file:=arg_log_file \
-            -log-level:=arg_log_level \
-            -socket-address:=arg_socket_address \
-            -config-file:=arg_config_file
-
-        local log_file="/dev/null"
-        if [[ -n $arg_log_file ]]; then
-            log_file="$arg_log_file[-1]"
-        fi
-
-        local -a command_server_args=()
-
-        if [[ -n $arg_log_level ]]; then
-            command_server_args+=(
-                --log-level "$arg_log_level[-1]"
-            )
-        fi
-
-        if [[ -n $arg_socket_address ]]; then
-            command_server_args+=(
-                --socket-address "$arg_socket_address[-1]"
-            )
-        fi
-
-        if [[ -n $arg_config_file ]]; then
-            command_server_args+=(
-                --config-file "$arg_config_file[-1]"
-            )
-        fi
-
         local stdin stdout stderr status_pipe
         __command-server-forward-stdio-yes-tty
 
         python3 "${COMMAND_SERVER_LIB}/../src/command_server.py" \
-            "$command_server_args[@]" \
+            "$@" \
             "$stdin" \
             "$stdout" \
             "$stderr" \
-            "$status_pipe" &> "$log_file" < /dev/null &
+            "$status_pipe" & #&> /dev/null < /dev/null &
         server_pid="$!"
 
         IFS="" read result < "$status_pipe"

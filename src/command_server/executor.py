@@ -58,7 +58,11 @@ class Executor:
 
 @contextmanager
 def make_executor(
-    working_dir: str, executor_command: list[str], stdio: Stdio, ops_fifo_path: str
+    working_dir: str,
+    executor_command: str,
+    executor_args: list[str],
+    stdio: Stdio,
+    ops_fifo_path: str,
 ) -> Generator[Executor, None, None]:
     with (
         token_io.open_fds(
@@ -68,7 +72,8 @@ def make_executor(
         token_io.mkfifo() as coproc_out_path,
         subprocess.Popen(
             cwd=working_dir,
-            args=executor_command + [coproc_in_path, coproc_out_path, ops_fifo_path],
+            args=[executor_command, coproc_in_path, coproc_out_path, ops_fifo_path]
+            + executor_args,
             stdin=stdio_fds[0],
             stdout=stdio_fds[1],
             stderr=stdio_fds[2],
@@ -77,7 +82,9 @@ def make_executor(
         token_io.open_pipe_reader(coproc_out_path) as coproc_out,
     ):
         try:
-            _LOGGER.debug("Coprocess started, waiting on init status")
+            _LOGGER.debug(
+                f"Started coprocess: '{executor_command}' with additional args {executor_args}"
+            )
             is_ready = coproc_out.read()
             with token_io.open_pipe_writer(stdio.status_pipe) as status_pipe:
                 if is_ready != "0":
@@ -133,6 +140,7 @@ class ExecutorManager:
                 with make_executor(
                     self.config.working_dir,
                     self.config.command,
+                    self.config.args,
                     load_stdio,
                     self.ops_fifo_path,
                 ) as executor:

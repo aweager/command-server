@@ -22,7 +22,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def main(config: CommandServerConfig) -> int:
-    logging.basicConfig(level=config.log_level)
+    logging.basicConfig(level=config.log_level, filename=config.log_file)
 
     _LOGGER.error(f"=== Starting server instance {os.getpid()} ===")
 

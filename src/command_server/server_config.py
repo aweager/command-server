@@ -10,6 +10,8 @@ import sys
 
 from .model import SupportedSignal, Stdio
 
+_LOGGER = logging.getLogger(__name__)
+
 
 @dataclass
 class SignalTranslations:
@@ -19,7 +21,8 @@ class SignalTranslations:
 @dataclass
 class ExecutorConfig:
     working_dir: str
-    command: list[str]
+    command: str
+    args: list[str]
     max_concurrency: int
     signal_translations: SignalTranslations
 
@@ -27,6 +30,7 @@ class ExecutorConfig:
 @dataclass
 class CommandServerConfig:
     log_level: int
+    log_file: str
     socket_address: str
     initial_load_stdio: Stdio
     executor_config: ExecutorConfig
@@ -41,21 +45,24 @@ class _ConfigFilePath:
             return None
 
         input_path = pathlib.Path(path_str).expanduser()
-        if input_path.is_absolute() or self.dir is None:
-            return input_path
 
-        return self.dir.joinpath(input_path)
+        if path_str.startswith("./") and self.dir:
+            return self.dir.joinpath(input_path)
+
+        return input_path
 
 
 class _ArgNamespace(Namespace):
     config_file: Optional[pathlib.Path]
+    log_file: Optional[pathlib.Path]
+    log_level: Optional[str]
     max_concurrency: Optional[int]
-    socket_address: Optional[pathlib.Path]
+    socket: Optional[pathlib.Path]
     stdin: pathlib.Path
     stdout: pathlib.Path
     stderr: pathlib.Path
     status_pipe: pathlib.Path
-    command: list[str]
+    executor_args: list[str]
 
 
 def _parse_args(argv: list[str]) -> _ArgNamespace:
@@ -65,20 +72,32 @@ def _parse_args(argv: list[str]) -> _ArgNamespace:
         epilog="See http://www.github.com/aweager/command-server for details",
     )
 
-    arg_parser.add_argument(
-        "--config-file",
-        type=pathlib.Path,
-        help="Configuration file to base the server on",
-    )
     arg_parser.add_argument("--log-level", help="Log level, defaults to WARNING")
+    arg_parser.add_argument(
+        "--log-file",
+        type=pathlib.Path,
+        help="Log file",
+    )
     arg_parser.add_argument(
         "--max-concurrency", type=int, help="Maximum number of concurrent requests"
     )
     arg_parser.add_argument(
-        "--socket-address",
+        "--socket",
         type=pathlib.Path,
         help="Unix Domain Socket address to listen on",
     )
+
+    arg_parser.add_argument(
+        "config_file",
+        type=pathlib.Path,
+        help="Configuration file to base the server on",
+    )
+    arg_parser.add_argument(
+        "executor_args",
+        nargs="*",
+        help="Arguments to pass when (re)starting the executor",
+    )
+
     arg_parser.add_argument(
         "stdin", type=pathlib.Path, help="Initial stdin for the executor"
     )
@@ -92,9 +111,6 @@ def _parse_args(argv: list[str]) -> _ArgNamespace:
         "status_pipe",
         type=pathlib.Path,
         help="Where to write the executor setup's exit status",
-    )
-    arg_parser.add_argument(
-        "command", nargs="*", help="Command to run when (re)starting the executor"
     )
 
     return arg_parser.parse_args(argv[1:], _ArgNamespace())
@@ -169,22 +185,22 @@ def parse_config(argv: list[str]) -> CommandServerConfig:
     args = _parse_args(argv)
     file = _parse_file(args.config_file)
 
-    socket_address = args.socket_address or file.socket_address
+    socket_address = args.socket or file.socket_address
     if not socket_address:
         raise RuntimeError("No socket address specified in args or config file")
 
     if not file.command:
         raise RuntimeError("No executor command specified in config file")
 
-    full_command = [file.command] + (file.args or [])
-
     return CommandServerConfig(
         socket_address=str(socket_address),
         log_level=logging.getLevelNamesMapping()[
             args.log_level or file.log_level or "WARNING"
         ],
+        log_file=str(args.log_file or "/dev/null"),
         executor_config=ExecutorConfig(
-            command=full_command,
+            command=file.command,
+            args=args.executor_args or file.args or [],
             working_dir=str(file.working_dir or os.getcwd()),
             max_concurrency=args.max_concurrency or file.max_concurrency or sys.maxsize,
             signal_translations=file.signal_translations or SignalTranslations(dict()),
