@@ -8,7 +8,7 @@ import sys
 import threading
 from typing import Generator, Optional
 
-from .server_config import ExecutorConfig
+from .server_config import CommandServerConfig, ExecutorConfig
 from .model import *
 from .operations import *
 from . import token_io
@@ -227,8 +227,9 @@ class ExecutorManager:
             _LOGGER.debug(f"Job {id} was already completed")
 
     def reload_config(self, reload_stdio: Stdio) -> Optional[ExecutorConfig]:
+        all_config: CommandServerConfig
         try:
-            return server_config.parse_config(sys.argv).executor_config
+            all_config = server_config.parse_config(sys.argv)
         except Exception as ex:
             with (
                 token_io.open_pipe_writer(reload_stdio.stderr) as stderr,
@@ -237,6 +238,11 @@ class ExecutorManager:
                 stderr.write([f"Failed to parse config on reload: {ex}"])
                 status_pipe.write(["127"])
                 return None
+
+        logging.basicConfig(
+            level=all_config.log_level, filename=all_config.log_file, force=True
+        )
+        return all_config.executor_config
 
     def interrupt_waiting_work_items(self) -> None:
         _LOGGER.info("Cancelling pending work items")

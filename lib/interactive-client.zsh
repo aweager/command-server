@@ -21,7 +21,7 @@ function command-server-call() {
     local request_id result
 
     local saved_tty
-    if [[ -t 0 || -t 1 || -t 2 ]]; then
+    if [[ -t 0 ]]; then
         saved_stty="$(stty -g)"
     fi
 
@@ -79,7 +79,7 @@ function command-server-reload() {
     local -a pids
     local saved_stty
 
-    if [[ -t 0 || -t 1 || -t 2 ]]; then
+    if [[ -t 0 ]]; then
         saved_stty="$(stty -g)"
     fi
 
@@ -114,7 +114,7 @@ function command-server-start() {
     local -a pids
     local server_pid saved_stty
 
-    if [[ -t 0 || -t 1 || -t 2 ]]; then
+    if [[ -t 0 ]]; then
         saved_stty="$(stty -g)"
     fi
 
@@ -140,7 +140,7 @@ function command-server-start() {
             "$stdin" \
             "$stdout" \
             "$stderr" \
-            "$status_pipe" & #&> /dev/null < /dev/null &
+            "$status_pipe" &> /dev/null < /dev/null &
         server_pid="$!"
 
         IFS="" read result < "$status_pipe"
@@ -148,7 +148,11 @@ function command-server-start() {
     } always {
         __command-server-cleanup
         if [[ -n "$server_pid" ]]; then
-            echo "Server is running at pid $server_pid"
+            if print -nu3; then
+                printf '%s' "$server_pid" >&3
+            else
+                echo "Server is running at pid $server_pid"
+            fi
         fi
     }
 }
@@ -252,18 +256,19 @@ function __command-server-forward-fds() {
         done
 
         local -a socat_args
-        if [[ "$#" -eq 1 && "$1" -eq 0 ]]; then
-            socat_args+=("-u")
-        elif [[ "$1" -ne 0 ]]; then
-            socat_args+=("-U")
+        if [[ "$1" -eq 0 ]]; then
+            local tty="$(tty)"
+            if [[ $# -eq 1 ]]; then
+                # Just foward stdin -> link
+                socat -u "GOPEN:$tty,rawer" "PTY,sane,link=$link" < /dev/null &> /dev/null &
+            else
+                # Forward $(tty) <-> link
+                socat "GOPEN:$tty,rawer" "PTY,sane,link=$link" < /dev/null &> /dev/null &
+            fi
+        else
+            # Forward real fd <- 3 <- link
+            socat -U "FD:3" "PTY,rawer,link=$link" 3>&$1 < /dev/null &> /dev/null &
         fi
-
-        socat_args+=(
-            "GOPEN:$TTY,rawer,ignoreeof"
-            "PTY,sane,link=$link"
-        )
-
-        socat "$socat_args[@]" < /dev/null &> /dev/null &
         pids+=($!)
 
         # TODO better way of ensuring link exists
@@ -271,7 +276,9 @@ function __command-server-forward-fds() {
             sleep 0.01
         done
 
-        stty brkint -ignbrk isig < "$TTY"
+        if [[ -t 0 ]]; then
+            stty brkint -ignbrk isig
+        fi
     else
         local fifo
         for fd; do
