@@ -3,6 +3,12 @@
 zmodload zsh/net/socket
 zmodload -F zsh/stat b:zstat
 
+typeset -gAH CommandServerClient
+
+CommandServerClient[rundir]="${XDG_RUNTIME_DIR-${HOME}/.cache}/command-server-client"
+mkdir -p "$CommandServerClient[rundir]"
+chmod 0700 "$CommandServerClient[rundir]"
+
 function command-server-call-and-forget() {
     setopt local_options err_return
 
@@ -16,6 +22,7 @@ function command-server-call-and-forget() {
     shift
 
     local stdin stdout stderr
+    local invocation_id="$RANDOM"
     __command-server-forward-stdio-no-tty
 
     __command-server-raw-send \
@@ -92,7 +99,10 @@ function __command-server-fd-stat() {
 }
 
 function __command-server-forward-pipe() {
-    if [[ -t $2 ]]; then
+    local direction="$1"
+    local fd="$2"
+
+    if [[ -t $fd ]]; then
         # do not forward TTYs
         REPLY="/dev/null"
         return
@@ -100,19 +110,19 @@ function __command-server-forward-pipe() {
 
     # Create the fifo ourselves so we don't have process scheduling race
     # conditions (it needs to exist when the server gets the request)
-    REPLY="$(mktemp -u)"
+    REPLY="${CommandServerClient[rundir]}/$$.$invocation_id.$fd.pipe"
     mkfifo -m 600 "$REPLY"
-    if [[ "$1" == "-u" ]]; then
+    if [[ "$direction" == "-u" ]]; then
         (
             setopt no_err_return
-            socat "$1" "FD:3" "PIPE:$REPLY"
+            socat "$direction" "FD:3" "PIPE:$REPLY"
             rm "$REPLY"
-        ) 3<&$2 < /dev/null &> /dev/null &!
+        ) 3<&$fd < /dev/null &> /dev/null &!
     else
         (
             setopt no_err_return
-            socat "$1" "FD:3" "PIPE:$REPLY"
+            socat "$direction" "FD:3" "PIPE:$REPLY"
             rm "$REPLY"
-        ) 3>&$2 < /dev/null &> /dev/null &!
+        ) 3>&$fd < /dev/null &> /dev/null &!
     fi
 }

@@ -2,29 +2,26 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 import os
-import tempfile
 import socket
+import random
 from typing import Generator, Optional, Tuple
+
+_HOME = os.getenv("HOME")
+_RUNDIR = os.getenv("XDG_RUNTIME_DIR", f"{_HOME}/.cache")
+_RUNDIR += "/command-server"
+os.makedirs(_RUNDIR)
 
 
 @contextmanager
-def mkfifo() -> Generator[str, None, None]:
-    dir: Optional[str] = None
-    path: Optional[str] = None
+def mkfifo(name_hint: str) -> Generator[str, None, None]:
+    path = f"{_RUNDIR}/{os.getpid()}.{random.random()}.{name_hint}.pipe"
     try:
-        dir = tempfile.mkdtemp()
-        path = os.path.join(dir, "pipe")
         os.mkfifo(path)
         yield path
     finally:
         if path is not None:
             try:
                 os.unlink(path)
-            except FileNotFoundError:
-                pass
-        if dir is not None:
-            try:
-                os.rmdir(dir)
             except FileNotFoundError:
                 pass
 

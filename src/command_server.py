@@ -53,7 +53,7 @@ def main(config: CommandServerConfig) -> int:
 
     terminate_event = threading.Event()
 
-    with token_io.mkfifo() as ops_fifo:
+    with token_io.mkfifo("ops") as ops_fifo:
         socket_listener = SocketListener(
             sock_addr=config.socket_address,
             ops_fifo_path=ops_fifo,

@@ -46,6 +46,7 @@ function command-server-call() {
             " "$sig"
         done
 
+        local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
         __command-server-raw-send \
             "$socket" \
@@ -88,6 +89,7 @@ function command-server-reload() {
         local stdin stdout stderr status_pipe
 
         # TODO signals
+        local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
 
         __command-server-raw-send \
@@ -133,6 +135,7 @@ function command-server-start() {
         done
 
         local stdin stdout stderr status_pipe
+        local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
 
         python3 "${COMMAND_SERVER_LIB}/../src/command_server.py" \
@@ -204,7 +207,7 @@ function __command-server-cleanup() {
 }
 
 function __command-server-forward-stdio-yes-tty() {
-    status_pipe="$(mktemp -u)"
+    status_pipe="${CommandServerClient[rundir]}/$$.$invocation_id.status.pipe"
     fifos+=("$status_pipe")
     mkfifo -m 600 "$status_pipe"
 
@@ -249,7 +252,7 @@ function __command-server-forward-fds() {
     local fd
 
     if [[ -t "$1" ]]; then
-        local link="$(mktemp -u)"
+        local link="${CommandServerClient[rundir]}/$$.$invocation_id.$1.tty"
         fifos+=("$link")
         for fd; do
             Reply[$fd]="$link"
@@ -282,7 +285,7 @@ function __command-server-forward-fds() {
     else
         local fifo
         for fd; do
-            fifo="$(mktemp -u)"
+            fifo="${CommandServerClient[rundir]}/$$.$invocation_id.$fd.pipe"
             fifos+=("$fifo")
             mkfifo -m 600 "$fifo"
             Reply[$fd]="$fifo"

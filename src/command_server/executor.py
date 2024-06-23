@@ -68,8 +68,8 @@ def make_executor(
         token_io.open_fds(
             (stdio.stdin, Mode.R), (stdio.stdout, Mode.W), (stdio.stderr, Mode.W)
         ) as stdio_fds,
-        token_io.mkfifo() as coproc_in_path,
-        token_io.mkfifo() as coproc_out_path,
+        token_io.mkfifo("coproc-in") as coproc_in_path,
+        token_io.mkfifo("coproc-out") as coproc_out_path,
         subprocess.Popen(
             cwd=working_dir,
             args=[executor_command, coproc_in_path, coproc_out_path, ops_fifo_path]
