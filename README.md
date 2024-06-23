@@ -1,5 +1,9 @@
 # command-server
 
+```
+WARNING: If you're using this, don't
+```
+
 Client-server setup for running commands transparently in a different environment
 
 ## Protocol
@@ -89,10 +93,15 @@ written to a named pipe.
 
 ### Executor API
 
-When first stood up, a single file name `queue-ops` will be written to standard
-input, followed by a newline.
+The first three positional arguments passed to the executor are:
+- file to read commands from
+- file to write PIDs to
+- file to write completions to
 
-In a loop, the executor reads on standard input:
+Following after that, additional positional arguments may be appended from
+the invocation of `command_server.py`, or from the config file for the server.
+
+In a loop, the executor reads commands in this format:
 
 ```
 <request-id>
@@ -105,7 +114,7 @@ In a loop, the executor reads on standard input:
 <command>...
 ```
 
-Writing to standard output:
+And writes out:
 
 ```
 <pid>
@@ -113,7 +122,7 @@ Writing to standard output:
 
 Where `pid` is the process ID which is handling the execution of the command.
 
-When the request is completed, will write to `queue-ops`:
+When the request is completed, will write the completion:
 
 ```
 done <request-id>
@@ -122,7 +131,8 @@ done <request-id>
 ### Executor shell lib
 
 A POSIX-compliant shell implementation of the executor is provided at
-`bin/lib/posix-executor-loop.sh`. It expects a function (or other command)
-named `execute-command` to be defined, which accepts the `command` as its
-arguments. The working directory, STDIO, and status reporting are all handled
-for you.
+`bin/lib/posix-executor-loop.sh`. The working directory, STDIO, and status
+reporting are all handled for you. It expects 4 positional arguments:
+- Function to call to execute the command. After calling, `$!` should be the PID
+  handling the request
+- The three files passed as the initial executor args
