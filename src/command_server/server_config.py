@@ -122,6 +122,7 @@ class _ConfigFile:
     socket_address: Optional[pathlib.Path]
     max_concurrency: Optional[int]
     log_level: Optional[str]
+    log_file: Optional[pathlib.Path]
 
     # [executor]
     working_dir: Optional[pathlib.Path]
@@ -134,7 +135,7 @@ class _ConfigFile:
 
 def _parse_file(path: Optional[pathlib.Path]):
     if not path:
-        return _ConfigFile(None, None, None, None, None, None, None)
+        return _ConfigFile(None, None, None, None, None, None, None, None)
 
     config_parser = ConfigParser()
     config_parser.read(path)
@@ -172,6 +173,9 @@ def _parse_file(path: Optional[pathlib.Path]):
         args=args,
         max_concurrency=config_parser.getint("core", "max_concurrency", fallback=None),
         log_level=config_parser.get("core", "log_level", fallback=None),
+        log_file=config_dir.maybe_relative(
+            config_parser.get("core", "log_file", fallback=None)
+        ),
         socket_address=config_dir.maybe_relative(
             config_parser.get("core", "socket_address", fallback=None)
         ),
@@ -197,7 +201,7 @@ def parse_config(argv: list[str]) -> CommandServerConfig:
         log_level=logging.getLevelNamesMapping()[
             args.log_level or file.log_level or "WARNING"
         ],
-        log_file=str(args.log_file or "/dev/null"),
+        log_file=str(args.log_file or file.log_file or "/dev/null"),
         executor_config=ExecutorConfig(
             command=file.command,
             args=args.executor_args or file.args or [],

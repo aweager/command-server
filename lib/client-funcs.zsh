@@ -25,6 +25,7 @@ function command-server-call-and-forget() {
     local invocation_id="$RANDOM"
     __command-server-forward-stdio-no-tty
 
+    printf "%s" "$*" > "$CommandServerClient[rundir]/$$.$invocation_id.forget"
     __command-server-raw-send \
         "$socket" \
         call \

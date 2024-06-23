@@ -48,6 +48,8 @@ function command-server-call() {
 
         local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
+
+        printf "%s" "$*" > "$CommandServerClient[rundir]/$$.$invocation_id.call"
         __command-server-raw-send \
             "$socket" \
             call \
@@ -92,6 +94,7 @@ function command-server-reload() {
         local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
 
+        printf "%s" "$*" > "$CommandServerClient[rundir]/$$.$invocation_id.reload"
         __command-server-raw-send \
             "$socket" \
             reload \
@@ -138,12 +141,13 @@ function command-server-start() {
         local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
 
+        printf "%s" "$*" > "$CommandServerClient[rundir]/$$.$invocation_id.start"
         python3 "${COMMAND_SERVER_LIB}/../src/command_server.py" \
             "$@" \
             "$stdin" \
             "$stdout" \
             "$stderr" \
-            "$status_pipe" &> /dev/null < /dev/null &
+            "$status_pipe" &
         server_pid="$!"
 
         IFS="" read result < "$status_pipe"
@@ -151,7 +155,7 @@ function command-server-start() {
     } always {
         __command-server-cleanup
         if [[ -n "$server_pid" ]]; then
-            if print -nu3; then
+            if print -nu3 &> /dev/null; then
                 printf '%s' "$server_pid" >&3
             else
                 echo "Server is running at pid $server_pid"
