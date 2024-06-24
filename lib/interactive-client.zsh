@@ -48,8 +48,6 @@ function command-server-call() {
 
         local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
-
-        printf "%s" "$*" > "$CommandServerClient[rundir]/$$.$invocation_id.call"
         __command-server-raw-send \
             "$socket" \
             call \
@@ -93,8 +91,6 @@ function command-server-reload() {
         # TODO signals
         local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
-
-        printf "%s" "$*" > "$CommandServerClient[rundir]/$$.$invocation_id.reload"
         __command-server-raw-send \
             "$socket" \
             reload \
@@ -141,7 +137,6 @@ function command-server-start() {
         local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
 
-        printf "%s" "$*" > "$CommandServerClient[rundir]/$$.$invocation_id.start"
         python3 "${COMMAND_SERVER_LIB}/../src/command_server.py" \
             "$@" \
             "$stdin" \
