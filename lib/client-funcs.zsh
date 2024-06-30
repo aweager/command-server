@@ -23,9 +23,10 @@ function command-server-call-and-forget() {
 
     local stdin stdout stderr
     local invocation_id="$RANDOM"
+    local -a pids fifos
     __command-server-forward-stdio-no-tty
 
-    __command-server-raw-send \
+    if ! __command-server-raw-send \
         "$socket" \
         call \
         "$PWD" \
@@ -34,7 +35,22 @@ function command-server-call-and-forget() {
         "$stderr" \
         "/dev/null" \
         "$#" \
-        "$@"
+        "$@"; then
+
+        local pid
+        for pid in "$pids[@]"; do
+            kill -HUP "$pid" &> /dev/null || true
+        done
+
+        local fifo
+        for fifo in "$fifos[@]"; do
+            if [[ -e $fifo ]]; then
+                rm "$fifo" &> /dev/null || true
+            fi
+        done
+
+        return 1
+    fi
 }
 
 function __command-server-raw-send() {
@@ -112,6 +128,7 @@ function __command-server-forward-pipe() {
     # conditions (it needs to exist when the server gets the request)
     REPLY="${CommandServerClient[rundir]}/$$.$invocation_id.$fd.pipe"
     mkfifo -m 600 "$REPLY"
+    fifos+=("$REPLY")
     if [[ "$direction" == "-u" ]]; then
         (
             setopt no_err_return
@@ -125,4 +142,5 @@ function __command-server-forward-pipe() {
             rm "$REPLY"
         ) 3>&$fd < /dev/null &> /dev/null &!
     fi
+    pids+=($!)
 }
