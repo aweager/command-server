@@ -68,7 +68,7 @@ while true; do
         printf '%s\n' "$RESULT" > "$STATUS_PIPE"
     ) &
 
-    if [[ "$?" -ne 0 ]]; then
+    if [ "$?" -ne 0 ]; then
         printf '%s\n' "-1" >&4
     fi
 done
