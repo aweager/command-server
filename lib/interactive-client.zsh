@@ -25,7 +25,9 @@ function command-server-call() {
         saved_stty="$(stty -g)"
     fi
 
-    {
+    () {
+        trap __command-server-cleanup EXIT
+
         local socket="$1"
         shift
 
@@ -62,9 +64,7 @@ function command-server-call() {
         IFS="" read request_id < "$status_pipe"
         IFS="" read result < "$status_pipe"
         return $result
-    } always {
-        __command-server-cleanup
-    }
+    } "$@"
 }
 
 function command-server-reload() {
@@ -84,7 +84,9 @@ function command-server-reload() {
         saved_stty="$(stty -g)"
     fi
 
-    {
+    () {
+        trap __command-server-cleanup EXIT
+
         local socket="$1"
         local stdin stdout stderr status_pipe
 
@@ -101,9 +103,7 @@ function command-server-reload() {
 
         IFS="" read result < "$status_pipe"
         return $result
-    } always {
-        __command-server-cleanup
-    }
+    } "$@"
 }
 
 function command-server-start() {
@@ -119,7 +119,18 @@ function command-server-start() {
         saved_stty="$(stty -g)"
     fi
 
-    {
+    () {
+        trap '
+            __command-server-cleanup
+            if [[ -n "$server_pid" ]]; then
+                if print -nu3 &> /dev/null; then
+                    printf '%s' "$server_pid" >&3
+                else
+                    echo "Server is running at pid $server_pid"
+                fi
+            fi
+        ' EXIT
+
         local sig sig_return_val
         for sig in INT TERM QUIT HUP; do
             sig_return_val="$((127 + $signals[(Ie)$sig]))"
@@ -147,16 +158,7 @@ function command-server-start() {
 
         IFS="" read result < "$status_pipe"
         return $result
-    } always {
-        __command-server-cleanup
-        if [[ -n "$server_pid" ]]; then
-            if print -nu3 &> /dev/null; then
-                printf '%s' "$server_pid" >&3
-            else
-                echo "Server is running at pid $server_pid"
-            fi
-        fi
-    }
+    } "$@"
 }
 
 function command-server-terminate() {
