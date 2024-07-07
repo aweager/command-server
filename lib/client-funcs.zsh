@@ -9,6 +9,9 @@ CommandServerClient[rundir]="${XDG_RUNTIME_DIR-${HOME}/.cache}/command-server-cl
 mkdir -p "$CommandServerClient[rundir]"
 chmod 0700 "$CommandServerClient[rundir]"
 
+CommandServerClient[logdir]="${XDG_STATE_DIR-${HOME}/.local/state}/command-server-client"
+mkdir -p "$CommandServerClient[logdir]"
+
 function command-server-call-and-forget() {
     setopt local_options err_return
 
@@ -25,6 +28,8 @@ function command-server-call-and-forget() {
     local invocation_id="$RANDOM"
     local -a pids fifos
     __command-server-forward-stdio-no-tty
+
+    printf '%s.%s forget %s' "$$" "$invocation_id" "$*" >> "$CommandServerClient[logdir]/client.log"
 
     if ! __command-server-raw-send \
         "$socket" \
