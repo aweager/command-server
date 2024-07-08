@@ -29,7 +29,7 @@ function command-server-call-and-forget() {
     local -a pids fifos
     __command-server-forward-stdio-no-tty
 
-    printf '%s.%s forget %s' "$$" "$invocation_id" "$*" >> "$CommandServerClient[logdir]/client.log"
+    printf '%s.%s forget %s\n' "$$" "$invocation_id" "$*" >> "$CommandServerClient[logdir]/client.log"
 
     if ! __command-server-raw-send \
         "$socket" \

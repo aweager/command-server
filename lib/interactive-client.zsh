@@ -51,7 +51,7 @@ function command-server-call() {
         local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
 
-        printf '%s.%s call %s' "$$" "$invocation_id" "$*" >> "$CommandServerClient[logdir]/client.log"
+        printf '%s.%s call %s\n' "$$" "$invocation_id" "$*" >> "$CommandServerClient[logdir]/client.log"
 
         __command-server-raw-send \
             "$socket" \
@@ -97,7 +97,7 @@ function command-server-reload() {
         local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
 
-        printf '%s.%s reload %s' "$$" "$invocation_id" "$*" >> "$CommandServerClient[logdir]/client.log"
+        printf '%s.%s reload %s\n' "$$" "$invocation_id" "$*" >> "$CommandServerClient[logdir]/client.log"
 
         __command-server-raw-send \
             "$socket" \
