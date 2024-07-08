@@ -12,6 +12,12 @@ chmod 0700 "$CommandServerClient[rundir]"
 CommandServerClient[logdir]="${XDG_STATE_DIR-${HOME}/.local/state}/command-server-client"
 mkdir -p "$CommandServerClient[logdir]"
 
+() {
+    local -A StatOutput
+    zstat -H StatOutput /dev/null
+    CommandServerClient[devnull]="${StatOutput[inode]}:${StatOutput[rdev]}"
+}
+
 function command-server-call-and-forget() {
     setopt local_options err_return
 
@@ -90,27 +96,16 @@ function __command-server-forward-stdio-no-tty() {
     # Rules:
     #   - don't forward TTYs (this is a background operation)
     #       - handled in __command-server-forward-pipe
-    #   - forward stdin on its own
-    #   - when stdout == stderr, forward those togehter
+    #   - forward in fds and out fds separately
+    #   - forward together when possible
     #       - that way order of writes is maintained
 
-    __command-server-forward-pipe -u 0
-    stdin="$REPLY"
-
-    local stdout_stat stderr_stat
-    __command-server-fd-stat 1; stdout_stat="$REPLY"
-    __command-server-fd-stat 2; stderr_stat="$REPLY"
-
-    if [[ "$stdout_stat" == "$stderr_stat" ]]; then
-        __command-server-forward-pipe -U 1
-        stdout="$REPLY"
-        stderr="$REPLY"
-    else
-        __command-server-forward-pipe -U 1
-        stdout="$REPLY"
-        __command-server-forward-pipe -U 2
-        stderr="$REPLY"
-    fi
+    local -A Reply
+    __command-server-forward-pipes -u 0
+    __command-server-forward-pipes -U 1 2
+    stdin="$Reply[0]"
+    stdout="$Reply[1]"
+    stderr="$Reply[2]"
 }
 
 function __command-server-fd-stat() {
@@ -119,33 +114,42 @@ function __command-server-fd-stat() {
     REPLY="${StatOutput[inode]}:${StatOutput[rdev]}"
 }
 
-function __command-server-forward-pipe() {
+function __command-server-forward-pipes() {
     local direction="$1"
-    local fd="$2"
+    shift
 
-    if [[ -t $fd ]]; then
-        # do not forward TTYs
-        REPLY="/dev/null"
-        return
-    fi
+    local -A ReplyByStat
+    local fd fd_stat fifo
+    for fd; do
+        fd_stat="$(__command-server-fd-stat $fd)"
 
-    # Create the fifo ourselves so we don't have process scheduling race
-    # conditions (it needs to exist when the server gets the request)
-    REPLY="${CommandServerClient[rundir]}/$$.$invocation_id.$fd.pipe"
-    mkfifo -m 600 "$REPLY"
-    fifos+=("$REPLY")
-    if [[ "$direction" == "-u" ]]; then
-        (
-            setopt no_err_return
-            socat "$direction" "FD:3" "PIPE:$REPLY"
-            rm "$REPLY"
-        ) 3<&$fd < /dev/null &> /dev/null &!
-    else
-        (
-            setopt no_err_return
-            socat "$direction" "FD:3" "PIPE:$REPLY"
-            rm "$REPLY"
-        ) 3>&$fd < /dev/null &> /dev/null &!
-    fi
-    pids+=($!)
+        if [[ -n "$ReplyByStat[$fd_stat]" ]]; then
+            Reply[$fd]="$ReplyByStat[$fd_stat]"
+        elif [[ -t $fd || "$fd_stat" == "$CommandServerClient[devnull]" ]]; then
+            ReplyByStat[$fd_stat]=/dev/null
+            Reply[$fd]=/dev/null
+        else
+            fifo="${CommandServerClient[rundir]}/$$.$invocation_id.$fd.pipe"
+            fifos+=("$fifo")
+            mkfifo -m 600 "$fifo"
+
+            ReplyByStat[$fd_stat]="$fifo"
+            Reply[$fd]="$fifo"
+
+            if [[ "$direction" == "-u" ]]; then
+                (
+                    setopt no_err_return
+                    socat "$direction" "FD:3" "PIPE:$fifo"
+                    rm "$fifo"
+                ) 3<&$fd < /dev/null &> /dev/null &!
+            else
+                (
+                    setopt no_err_return
+                    socat "$direction" "FD:3" "PIPE:$fifo"
+                    rm "$fifo"
+                ) 3>&$fd < /dev/null &> /dev/null &!
+            fi
+            pids+=($!)
+        fi
+    done
 }
