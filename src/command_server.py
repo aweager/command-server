@@ -48,7 +48,6 @@ def main(config: CommandServerConfig) -> int:
             status_pipe.write(["128"])
             return 128
 
-    work_items: dict[int, WorkItem] = dict()
     ops_queue: queue.Queue[Operation] = queue.Queue()
 
     terminate_event = threading.Event()
@@ -56,7 +55,6 @@ def main(config: CommandServerConfig) -> int:
     socket_listener = SocketListener(
         sock_addr=config.socket_address,
         ops_queue=ops_queue,
-        work_items=work_items,
         terminate_event=terminate_event,
     )
     socket_listener_thread = threading.Thread(target=socket_listener.loop)
@@ -64,7 +62,6 @@ def main(config: CommandServerConfig) -> int:
 
     executor_manager = ExecutorManager(
         ops_queue=ops_queue,
-        work_items=work_items,
         config=config.executor_config,
         terminate_event=terminate_event,
     )

@@ -15,7 +15,6 @@ _LOGGER = logging.getLogger(__name__)
 class SocketListener:
     sock_addr: str
     ops_queue: queue.Queue[Operation]
-    work_items: dict[int, WorkItem]
     terminate_event: threading.Event
 
     last_request_id: int
@@ -24,12 +23,10 @@ class SocketListener:
         self,
         sock_addr: str,
         ops_queue: queue.Queue[Operation],
-        work_items: dict[int, WorkItem],
         terminate_event: threading.Event,
     ) -> None:
         self.sock_addr = sock_addr
         self.ops_queue = ops_queue
-        self.work_items = work_items
         self.terminate_event = terminate_event
 
         self.last_request_id = 0
@@ -49,13 +46,16 @@ class SocketListener:
                     case CallRequest():
                         _LOGGER.debug(f"Recevied call request: {request}")
                         self.last_request_id += 1
-                        self.work_items[self.last_request_id] = WorkItem(
-                            id=self.last_request_id,
-                            dir=request.dir,
-                            stdio=request.stdio,
-                            command=request.command,
+                        self.ops_queue.put(
+                            AddWorkItem(
+                                WorkItem(
+                                    id=self.last_request_id,
+                                    dir=request.dir,
+                                    stdio=request.stdio,
+                                    command=request.command,
+                                )
+                            )
                         )
-                        self.ops_queue.put(AddWorkItem(self.last_request_id))
                     case SignalRequest():
                         _LOGGER.debug(f"Recevied signal request: {request}")
                         self.ops_queue.put(SignalWorkItem(request.id, request.signal))

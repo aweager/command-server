@@ -116,33 +116,31 @@ def make_executor(
 
 
 class ExecutorManager:
-    work_items: dict[int, WorkItem]
     ops_queue: queue.Queue[Operation]
     config: ExecutorConfig
     terminate_event: threading.Event
 
-    waiting_work_items: list[int]
-    active_work_items: dict[int, int]
+    pending_work_items: dict[int, WorkItem]
+    active_work_items: dict[int, WorkItem]
+    active_pids: dict[int, int]
 
     def __init__(
         self,
-        work_items: dict[int, WorkItem],
         ops_queue: queue.Queue[Operation],
         config: ExecutorConfig,
         terminate_event: threading.Event,
     ) -> None:
-        self.work_items = work_items
         self.ops_queue = ops_queue
         self.config = config
         self.terminate_event = terminate_event
-
-        self.waiting_work_items = list()
+        self.pending_work_items = dict()
         self.active_work_items = dict()
+        self.active_pids = dict()
 
     def loop(self, load_stdio: Stdio) -> None:
         while True:
             if self.terminate_event.is_set():
-                self.interrupt_waiting_work_items()
+                self.interrupt_pending_work_items()
                 break
 
             with make_executor(
@@ -156,8 +154,8 @@ class ExecutorManager:
                     operation = self.ops_queue.get()
                     _LOGGER.debug(f"Got operation {operation}")
                     match operation:
-                        case AddWorkItem(id):
-                            self.add_work_item(id)
+                        case AddWorkItem(work_item):
+                            self.add_work_item(work_item)
                         case CompleteWorkItem(id):
                             self.complete_work_item(id)
                         case SignalWorkItem(id, signal):
@@ -177,44 +175,38 @@ class ExecutorManager:
 
         _LOGGER.info("Executor shutting down")
 
-    def add_work_item(self, id: int) -> None:
-        if id in self.work_items:
-            with token_io.open_pipe_writer(
-                self.work_items[id].stdio.status_pipe
-            ) as status_pipe:
-                status_pipe.write([str(id)])
+    def add_work_item(self, work_item: WorkItem) -> None:
+        with token_io.open_pipe_writer(work_item.stdio.status_pipe) as status_pipe:
+            status_pipe.write([str(work_item.id)])
 
-        self.waiting_work_items.append(id)
+        self.pending_work_items[work_item.id] = work_item
 
     def complete_work_item(self, id: int) -> None:
-        if id in self.active_work_items:
+        if id in self.active_pids:
+            del self.active_pids[id]
             del self.active_work_items[id]
 
     def maybe_start_work_item(self, executor: Executor) -> None:
-        if len(self.active_work_items) >= self.config.max_concurrency:
+        if len(self.active_pids) >= self.config.max_concurrency:
             return
 
-        id: Optional[int] = None
-        while len(self.waiting_work_items) > 0:
-            id = self.waiting_work_items.pop(0)
-            if id in self.work_items:
-                break
-
-        if id is None:
+        if len(self.pending_work_items) == 0:
             return
 
-        pid = executor.start_work_item(self.work_items[id])
+        id, work_item = self.pending_work_items.popitem()
+
+        pid = executor.start_work_item(work_item)
         if pid != -1:
-            self.active_work_items[id] = pid
-            del self.work_items[id]
+            self.active_pids[id] = pid
+            self.active_work_items[id] = work_item
         _LOGGER.debug(f"Work item {id} -> {pid}")
 
     def signal_work_item(self, id: int, signal: SupportedSignal) -> None:
         if signal in self.config.signal_translations.mapping:
             signal = self.config.signal_translations.mapping[signal]
 
-        if id in self.active_work_items:
-            pid = self.active_work_items[id]
+        if id in self.active_pids:
+            pid = self.active_pids[id]
             _LOGGER.debug(f"Signaling job {id}, pid {pid} with {signal}")
             try:
                 os.kill(pid, signal.value)
@@ -222,9 +214,9 @@ class ExecutorManager:
                 # Swallow and log
                 _LOGGER.info(f"Error killing pid {pid}: {e}")
                 pass
-        elif id in self.work_items:
+        elif id in self.pending_work_items:
             _LOGGER.debug(f"Simulating signal {signal} for job {id}")
-            work_item = self.work_items[id]
+            work_item = self.pending_work_items[id]
             with token_io.open_pipe_writer(work_item.stdio.status_pipe) as status_pipe:
                 status_pipe.write([str(signal.value + 128)])
         else:
@@ -235,12 +227,14 @@ class ExecutorManager:
             open(stdio.stdout, "w") as stdout,
             token_io.open_pipe_writer(stdio.status_pipe) as status_pipe,
         ):
-            stdout.write("Waiting on work items:\n")
-            for id, work_item in self.work_items.items():
-                stdout.write(f"{id} -> {work_item}\n")
-            stdout.write("Executing work items:\n")
-            for id, pid in self.active_work_items.items():
-                stdout.write(f"{id} -> {pid}\n")
+            stdout.write("Pending jobs:\n")
+            for id, work_item in self.pending_work_items.items():
+                stdout.write(f"    {id} -> {work_item.command}\n")
+
+            stdout.write("Active jobs:\n")
+            for id, pid in self.active_pids.items():
+                work_item = self.active_work_items[id]
+                stdout.write(f"    {id} -> {pid} {work_item.command}\n")
             stdout.flush()
             status_pipe.write([str(0)])
 
@@ -262,13 +256,9 @@ class ExecutorManager:
         )
         return all_config.executor_config
 
-    def interrupt_waiting_work_items(self) -> None:
+    def interrupt_pending_work_items(self) -> None:
         _LOGGER.info("Cancelling pending work items")
-        for id in self.waiting_work_items:
-            if id in self.work_items:
-                work_item = self.work_items[id]
-                _LOGGER.debug(f"Interrupting work item: {work_item}")
-                with token_io.open_pipe_writer(
-                    self.work_items[id].stdio.status_pipe
-                ) as status_pipe:
-                    status_pipe.write([str(128 + SupportedSignal.INT.value)])
+        for work_item in self.pending_work_items.values():
+            _LOGGER.debug(f"Interrupting work item: {work_item}")
+            with token_io.open_pipe_writer(work_item.stdio.status_pipe) as status_pipe:
+                status_pipe.write([str(128 + SupportedSignal.INT.value)])

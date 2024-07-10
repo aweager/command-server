@@ -1,11 +1,11 @@
 from dataclasses import dataclass
 
-from .model import Stdio, SupportedSignal
+from .model import Stdio, SupportedSignal, WorkItem
 
 
 @dataclass
 class AddWorkItem:
-    id: int
+    work_item: WorkItem
 
 
 @dataclass
