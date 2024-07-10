@@ -16,6 +16,11 @@ class SignalRequest:
 
 
 @dataclass
+class StatusRequest:
+    stdio: Stdio
+
+
+@dataclass
 class ReloadRequest:
     args: Stdio
 
@@ -25,4 +30,4 @@ class TerminateRequest:
     pass
 
 
-Request = CallRequest | SignalRequest | ReloadRequest | TerminateRequest
+Request = CallRequest | SignalRequest | StatusRequest | ReloadRequest | TerminateRequest

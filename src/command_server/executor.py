@@ -162,6 +162,8 @@ class ExecutorManager:
                             self.complete_work_item(id)
                         case SignalWorkItem(id, signal):
                             self.signal_work_item(id, signal)
+                        case DisplayStatus(stdio):
+                            self.display_status(stdio)
                         case ReloadExecutor():
                             new_config = self.reload_config(operation.stdio)
                             if new_config:
@@ -227,6 +229,20 @@ class ExecutorManager:
                 status_pipe.write([str(signal.value + 128)])
         else:
             _LOGGER.debug(f"Job {id} was already completed")
+
+    def display_status(self, stdio: Stdio) -> None:
+        with (
+            open(stdio.stdout, "w") as stdout,
+            token_io.open_pipe_writer(stdio.status_pipe) as status_pipe,
+        ):
+            stdout.write("Waiting on work items:\n")
+            for id, work_item in self.work_items.items():
+                stdout.write(f"{id} -> {work_item}\n")
+            stdout.write("Executing work items:\n")
+            for id, pid in self.active_work_items.items():
+                stdout.write(f"{id} -> {pid}\n")
+            stdout.flush()
+            status_pipe.write([str(0)])
 
     def reload_config(self, reload_stdio: Stdio) -> Optional[ExecutorConfig]:
         all_config: CommandServerConfig

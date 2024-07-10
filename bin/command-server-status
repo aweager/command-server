@@ -1,0 +1,5 @@
+#!/bin/zsh
+
+source "${0:a:h}/../lib/interactive-client.zsh"
+
+command-server-status "$@"

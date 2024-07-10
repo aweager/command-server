@@ -51,7 +51,7 @@ function command-server-call() {
         local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
 
-        printf '%s.%s call %s\n' "$$" "$invocation_id" "$*" >> "$CommandServerClient[logdir]/client.log"
+        printf '%s.%s %s call %s\n' "$$" "$invocation_id" "$socket" "$*" >> "$CommandServerClient[logdir]/client.log"
 
         __command-server-raw-send \
             "$socket" \
@@ -97,7 +97,7 @@ function command-server-reload() {
         local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
 
-        printf '%s.%s reload %s\n' "$$" "$invocation_id" "$*" >> "$CommandServerClient[logdir]/client.log"
+        printf '%s.%s %s reload %s\n' "$$" "$invocation_id" "$socket" "$*" >> "$CommandServerClient[logdir]/client.log"
 
         __command-server-raw-send \
             "$socket" \
@@ -193,6 +193,49 @@ function command-server-sig() {
         sig \
         "$2" \
         "$3"
+}
+
+function command-server-status() {
+    setopt local_options local_traps err_return
+
+    if [[ $# -ne 1 ]]; then
+        printf '%s\n' \
+            'Usage: command-server-reload <socket>' >&2
+        return 1
+    fi
+
+    local -a fifos
+    local -a pids
+    local saved_stty
+
+    if [[ -t 0 ]]; then
+        saved_stty="$(stty -g)"
+    fi
+
+    () {
+        trap __command-server-cleanup EXIT
+
+        local socket="$1"
+        local stdin stdout stderr status_pipe
+
+        # TODO signals
+        local invocation_id="$RANDOM"
+        __command-server-forward-stdio-yes-tty
+
+        printf '%s.%s %s status %s\n' "$$" "$invocation_id" "$socket" "$*" >> "$CommandServerClient[logdir]/client.log"
+
+        __command-server-raw-send \
+            "$socket" \
+            status \
+            "$stdin" \
+            "$stdout" \
+            "$stderr" \
+            "$status_pipe"
+
+        IFS="" read result < "$status_pipe"
+        return $result
+    } "$@"
+
 }
 
 function __command-server-cleanup() {

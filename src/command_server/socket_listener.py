@@ -59,6 +59,9 @@ class SocketListener:
                     case SignalRequest():
                         _LOGGER.debug(f"Recevied signal request: {request}")
                         self.ops_queue.put(SignalWorkItem(request.id, request.signal))
+                    case StatusRequest():
+                        _LOGGER.debug(f"Received status request: {request}")
+                        self.ops_queue.put(DisplayStatus(request.stdio))
                     case ReloadRequest():
                         _LOGGER.debug(f"Recevied reload request: {request}")
                         self.ops_queue.put(ReloadExecutor(request.args))
@@ -78,6 +81,8 @@ class SocketListener:
                     return self.read_call_request(reader)
                 case "sig":
                     return self.read_sig_request(reader)
+                case "status":
+                    return self.read_status_request(reader)
                 case "reload":
                     return self.read_reload_request(reader)
                 case "term":
@@ -140,6 +145,21 @@ class SocketListener:
             return None
 
         return SignalRequest(id=id, signal=signal)
+
+    def read_status_request(self, reader: TokenReader) -> None | StatusRequest:
+        body = reader.read_multiple(4)
+        if len(body) != 4:
+            _LOGGER.info(f"Status: invalid request has {len(body)} lines: {body}")
+            return None
+
+        return StatusRequest(
+            Stdio(
+                stdin=body[0],
+                stdout=body[1],
+                stderr=body[2],
+                status_pipe=body[3],
+            )
+        )
 
     def read_reload_request(self, reader: TokenReader) -> None | ReloadRequest:
         body = reader.read_multiple(4)

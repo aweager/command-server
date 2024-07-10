@@ -20,6 +20,11 @@ class SignalWorkItem:
 
 
 @dataclass
+class DisplayStatus:
+    stdio: Stdio
+
+
+@dataclass
 class ReloadExecutor:
     stdio: Stdio
 
@@ -30,5 +35,10 @@ class TerminateServer:
 
 
 Operation = (
-    AddWorkItem | CompleteWorkItem | SignalWorkItem | ReloadExecutor | TerminateServer
+    AddWorkItem
+    | CompleteWorkItem
+    | SignalWorkItem
+    | DisplayStatus
+    | ReloadExecutor
+    | TerminateServer
 )
