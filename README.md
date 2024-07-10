@@ -93,10 +93,9 @@ written to a named pipe.
 
 ### Executor API
 
-The first three positional arguments passed to the executor are:
+The first two positional arguments passed to the executor are:
 - file to read commands from
 - file to write PIDs to
-- file to write completions to
 
 Following after that, additional positional arguments may be appended from
 the invocation of `command_server.py`, or from the config file for the server.
@@ -110,6 +109,7 @@ In a loop, the executor reads commands in this format:
 <stdout>
 <stderr>
 <status-pipe>
+<completion-fifo>
 <num-command-args>
 <command>...
 ```
@@ -122,17 +122,14 @@ And writes out:
 
 Where `pid` is the process ID which is handling the execution of the command.
 
-When the request is completed, will write the completion:
-
-```
-done <request-id>
-```
+`completion-fifo` should be attached to a file descriptor on the spawned process
+so that the server can know when it completes by the file being closed.
 
 ### Executor shell lib
 
 A POSIX-compliant shell implementation of the executor is provided at
 `bin/lib/posix-executor-loop.sh`. The working directory, STDIO, and status
-reporting are all handled for you. It expects 4 positional arguments:
+reporting are all handled for you. It expects 3 positional arguments:
 - Function to call to execute the command. After calling, `$!` should be the PID
   handling the request
-- The three files passed as the initial executor args
+- The two files passed as the initial executor args

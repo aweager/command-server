@@ -6,7 +6,7 @@ import threading
 from .requests import *
 from .operations import *
 from .model import *
-from .token_io import TokenWriter, TokenReader
+from .token_io import TokenReader
 from . import token_io
 
 _LOGGER = logging.getLogger(__name__)
@@ -14,7 +14,6 @@ _LOGGER = logging.getLogger(__name__)
 
 class SocketListener:
     sock_addr: str
-    ops_fifo_path: str
     ops_queue: queue.Queue[Operation]
     work_items: dict[int, WorkItem]
     terminate_event: threading.Event
@@ -24,13 +23,11 @@ class SocketListener:
     def __init__(
         self,
         sock_addr: str,
-        ops_fifo_path: str,
         ops_queue: queue.Queue[Operation],
         work_items: dict[int, WorkItem],
         terminate_event: threading.Event,
     ) -> None:
         self.sock_addr = sock_addr
-        self.ops_fifo_path = ops_fifo_path
         self.ops_queue = ops_queue
         self.work_items = work_items
         self.terminate_event = terminate_event
@@ -39,15 +36,12 @@ class SocketListener:
 
     def loop(self) -> None:
         _LOGGER.info("Listening to socket")
-        with socket.socket(
-            socket.AF_UNIX, socket.SOCK_STREAM
-        ) as server, token_io.open_pipe_writer(self.ops_fifo_path) as ops_fifo:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
             server.bind(self.sock_addr)
             server.listen(1)
             while True:
                 if self.terminate_event.is_set():
                     self.ops_queue.put(TerminateServer())
-                    self.poll_fifo(ops_fifo)
                     break
 
                 request = self.read_next_request(server)
@@ -62,25 +56,18 @@ class SocketListener:
                             command=request.command,
                         )
                         self.ops_queue.put(AddWorkItem(self.last_request_id))
-                        self.poll_fifo(ops_fifo)
                     case SignalRequest():
                         _LOGGER.debug(f"Recevied signal request: {request}")
                         self.ops_queue.put(SignalWorkItem(request.id, request.signal))
-                        self.poll_fifo(ops_fifo)
                     case ReloadRequest():
                         _LOGGER.debug(f"Recevied reload request: {request}")
                         self.ops_queue.put(ReloadExecutor(request.args))
-                        self.poll_fifo(ops_fifo)
                     case TerminateRequest():
                         _LOGGER.debug(f"Received terminate request: {request}")
                         self.terminate_event.set()
                     case _:
                         pass
         _LOGGER.info("Socket listener shutting down")
-
-    def poll_fifo(self, ops_fifo: TokenWriter) -> None:
-        ops_fifo.write(["poll"])
-        _LOGGER.debug("Polled ops fifo")
 
     def read_next_request(self, server: socket.socket) -> None | Request:
         with token_io.accept_connection(server) as reader:

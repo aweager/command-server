@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import io
 import pathlib
 import subprocess
 import queue
@@ -22,38 +23,52 @@ os.environ["COMMAND_SERVER_LIB"] = str(
 )
 
 
+@dataclass
+class CompletionMonitor:
+    work_item_id: int
+    completion_fifo: io.TextIOWrapper
+    ops_queue: queue.Queue[Operation]
+
+    def block_until_done(self) -> None:
+        with self.completion_fifo:
+            self.completion_fifo.readline()
+            self.ops_queue.put(CompleteWorkItem(self.work_item_id))
+
+
+@dataclass
 class Executor:
     coproc_in: TokenWriter
     coproc_out: TokenReader
-
-    def __init__(
-        self,
-        coproc_in: TokenWriter,
-        coproc_out: TokenReader,
-    ):
-        self.coproc_in = coproc_in
-        self.coproc_out = coproc_out
+    ops_queue: queue.Queue[Operation]
 
     def start_work_item(self, work_item: WorkItem) -> int:
         _LOGGER.debug(f"Starting work item: {work_item}")
 
-        self.coproc_in.write(
-            [
-                str(work_item.id),
-                work_item.dir,
-                work_item.stdio.stdin,
-                work_item.stdio.stdout,
-                work_item.stdio.stderr,
-                work_item.stdio.status_pipe,
-                str(len(work_item.command)),
-            ]
-            + work_item.command
-        )
+        with token_io.mkfifo("completion") as completion_fifo:
+            self.coproc_in.write(
+                [
+                    str(work_item.id),
+                    work_item.dir,
+                    work_item.stdio.stdin,
+                    work_item.stdio.stdout,
+                    work_item.stdio.stderr,
+                    work_item.stdio.status_pipe,
+                    completion_fifo,
+                    str(len(work_item.command)),
+                ]
+                + work_item.command
+            )
 
-        _LOGGER.debug("Reading pid")
+            _LOGGER.debug("Starting completion listener")
+            threading.Thread(
+                target=CompletionMonitor(
+                    work_item.id, open(completion_fifo), self.ops_queue
+                ).block_until_done
+            ).start()
 
-        pid = int(self.coproc_out.read())
-        return pid
+            _LOGGER.debug("Reading pid")
+            pid = int(self.coproc_out.read())
+            return pid
 
 
 @contextmanager
@@ -62,7 +77,7 @@ def make_executor(
     executor_command: str,
     executor_args: list[str],
     stdio: Stdio,
-    ops_fifo_path: str,
+    ops_queue: queue.Queue[Operation],
 ) -> Generator[Executor, None, None]:
     with (
         token_io.open_fds(
@@ -72,8 +87,7 @@ def make_executor(
         token_io.mkfifo("coproc-out") as coproc_out_path,
         subprocess.Popen(
             cwd=working_dir,
-            args=[executor_command, coproc_in_path, coproc_out_path, ops_fifo_path]
-            + executor_args,
+            args=[executor_command, coproc_in_path, coproc_out_path] + executor_args,
             stdin=stdio_fds[0],
             stdout=stdio_fds[1],
             stderr=stdio_fds[2],
@@ -96,7 +110,7 @@ def make_executor(
                     raise RuntimeError(f"Failed to start executor: {is_ready}")
                 else:
                     status_pipe.write(["0"])
-            yield Executor(coproc_in, coproc_out)
+            yield Executor(coproc_in, coproc_out, ops_queue)
         finally:
             coproc.terminate()
 
@@ -104,7 +118,6 @@ def make_executor(
 class ExecutorManager:
     work_items: dict[int, WorkItem]
     ops_queue: queue.Queue[Operation]
-    ops_fifo_path: str
     config: ExecutorConfig
     terminate_event: threading.Event
 
@@ -115,13 +128,11 @@ class ExecutorManager:
         self,
         work_items: dict[int, WorkItem],
         ops_queue: queue.Queue[Operation],
-        ops_fifo_path: str,
         config: ExecutorConfig,
         terminate_event: threading.Event,
     ) -> None:
         self.work_items = work_items
         self.ops_queue = ops_queue
-        self.ops_fifo_path = ops_fifo_path
         self.config = config
         self.terminate_event = terminate_event
 
@@ -129,47 +140,38 @@ class ExecutorManager:
         self.active_work_items = dict()
 
     def loop(self, load_stdio: Stdio) -> None:
-        _LOGGER.debug(f"Ops fifo is {self.ops_fifo_path}")
+        while True:
+            if self.terminate_event.is_set():
+                self.interrupt_waiting_work_items()
+                break
 
-        with token_io.open_pipe_reader(self.ops_fifo_path) as ops_fifo:
-            while True:
-                if self.terminate_event.is_set():
-                    self.interrupt_waiting_work_items()
-                    break
+            with make_executor(
+                self.config.working_dir,
+                self.config.command,
+                self.config.args,
+                load_stdio,
+                self.ops_queue,
+            ) as executor:
+                while True:
+                    operation = self.ops_queue.get()
+                    _LOGGER.debug(f"Got operation {operation}")
+                    match operation:
+                        case AddWorkItem(id):
+                            self.add_work_item(id)
+                        case CompleteWorkItem(id):
+                            self.complete_work_item(id)
+                        case SignalWorkItem(id, signal):
+                            self.signal_work_item(id, signal)
+                        case ReloadExecutor():
+                            new_config = self.reload_config(operation.stdio)
+                            if new_config:
+                                self.config = new_config
+                                load_stdio = operation.stdio
+                                break
+                        case TerminateServer():
+                            break
 
-                with make_executor(
-                    self.config.working_dir,
-                    self.config.command,
-                    self.config.args,
-                    load_stdio,
-                    self.ops_fifo_path,
-                ) as executor:
-                    while True:
-                        _LOGGER.debug("Reading from ops fifo")
-                        op_line = ops_fifo.read()
-                        _LOGGER.debug(f"Got an op line: {op_line}")
-                        operation = self.parse_op(op_line)
-                        if operation:
-                            _LOGGER.debug(f"Got operation {operation}")
-                            match operation:
-                                case AddWorkItem(id):
-                                    self.add_work_item(id)
-                                case CompleteWorkItem(id):
-                                    self.complete_work_item(id)
-                                case SignalWorkItem(id, signal):
-                                    self.signal_work_item(id, signal)
-                                case ReloadExecutor():
-                                    new_config = self.reload_config(operation.stdio)
-                                    if new_config:
-                                        self.config = new_config
-                                        load_stdio = operation.stdio
-                                        break
-                                case TerminateServer():
-                                    break
-                        else:
-                            _LOGGER.info(f"Received invalid operation: {op_line}")
-
-                        self.maybe_start_work_item(executor)
+                    self.maybe_start_work_item(executor)
 
         _LOGGER.info("Executor shutting down")
 
@@ -254,18 +256,3 @@ class ExecutorManager:
                     self.work_items[id].stdio.status_pipe
                 ) as status_pipe:
                     status_pipe.write([str(128 + SupportedSignal.INT.value)])
-
-    def parse_op(self, op_line: str) -> None | Operation:
-        if op_line == "poll":
-            return self.ops_queue.get()
-
-        if not op_line.startswith("done "):
-            return None
-
-        id: int
-        try:
-            id = int(op_line[5:])
-        except:
-            return None
-
-        return CompleteWorkItem(id)

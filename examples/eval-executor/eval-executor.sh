@@ -9,6 +9,10 @@ echo "Printing back on stderr:"
 printf '%s\n' "$WHAT_I_READ" >&2
 
 run_args_blindly () {
+    echo "Evaluating:"
+    printf '    %s\n' "$@"
+    echo
+
     "$@" <&0 >&1 2>&2 &
 }
 

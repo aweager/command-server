@@ -1,10 +1,9 @@
 #!/bin/sh
 
-# Takes four positional arguments:
+# Takes 3 positional arguments:
 #   1: the command to use to dispatch requests
 #   2: the pipe to read commands from
 #   3: the pipe to write pids to
-#   4: the pipe to write completion messages to
 #
 # This script will close FD 0, 1, 2, and replace them.
 
@@ -31,7 +30,7 @@ QUEUE_OPS_FIFO="$4"
 
 exec < /dev/null > /dev/null 2>&1
 
-exec 3< "$INPUT" 4> "$OUTPUT" 5> "$QUEUE_OPS_FIFO"
+exec 3< "$INPUT" 4> "$OUTPUT"
 
 # Alert that loading was successful, and we can process requests
 echo 0 > "$OUTPUT"
@@ -43,6 +42,7 @@ while true; do
     read_token; STDOUT="$REPLY"
     read_token; STDERR="$REPLY"
     read_token; STATUS_PIPE="$REPLY"
+    read_token; COMPLETION_FIFO="$REPLY"
     read_token; NUM_ARGS="$REPLY"
 
     i=1
@@ -56,7 +56,7 @@ while true; do
 
     (
         cd "$WORKING_DIR"
-        "$EXECUTE_COMMAND" "$@" < "$STDIN" > "$STDOUT" 2> "$STDERR"
+        "$EXECUTE_COMMAND" "$@" < "$STDIN" > "$STDOUT" 2> "$STDERR" 9> "$COMPLETION_FIFO"
         CHILD_PID="$!"
 
         printf '%s\n' "$CHILD_PID" >&4
@@ -64,7 +64,6 @@ while true; do
         wait "$CHILD_PID" > /dev/null 2>&1
         RESULT="$?"
 
-        printf '%s\n' "done $REQUEST_ID" >&5
         printf '%s\n' "$RESULT" > "$STATUS_PIPE"
     ) &
 
