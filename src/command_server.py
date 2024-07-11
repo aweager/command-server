@@ -48,7 +48,7 @@ def main(config: CommandServerConfig) -> int:
             status_pipe.write(["128"])
             return 128
 
-    ops_queue: queue.Queue[Operation] = queue.Queue()
+    ops_queue: queue.SimpleQueue[Operation] = queue.SimpleQueue()
 
     terminate_event = threading.Event()
 

@@ -27,7 +27,7 @@ os.environ["COMMAND_SERVER_LIB"] = str(
 class CompletionMonitor:
     work_item_id: int
     completion_fifo: io.TextIOWrapper
-    ops_queue: queue.Queue[Operation]
+    ops_queue: queue.SimpleQueue[Operation]
 
     def block_until_done(self) -> None:
         with self.completion_fifo:
@@ -39,7 +39,7 @@ class CompletionMonitor:
 class Executor:
     coproc_in: TokenWriter
     coproc_out: TokenReader
-    ops_queue: queue.Queue[Operation]
+    ops_queue: queue.SimpleQueue[Operation]
 
     def start_work_item(self, work_item: WorkItem) -> int:
         _LOGGER.debug(f"Starting work item: {work_item}")
@@ -77,7 +77,7 @@ def make_executor(
     executor_command: str,
     executor_args: list[str],
     stdio: Stdio,
-    ops_queue: queue.Queue[Operation],
+    ops_queue: queue.SimpleQueue[Operation],
 ) -> Generator[Executor, None, None]:
     with (
         token_io.open_fds(
@@ -116,7 +116,7 @@ def make_executor(
 
 
 class ExecutorManager:
-    ops_queue: queue.Queue[Operation]
+    ops_queue: queue.SimpleQueue[Operation]
     config: ExecutorConfig
     terminate_event: threading.Event
 
@@ -126,7 +126,7 @@ class ExecutorManager:
 
     def __init__(
         self,
-        ops_queue: queue.Queue[Operation],
+        ops_queue: queue.SimpleQueue[Operation],
         config: ExecutorConfig,
         terminate_event: threading.Event,
     ) -> None:

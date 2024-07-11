@@ -14,7 +14,7 @@ _LOGGER = logging.getLogger(__name__)
 
 class SocketListener:
     sock_addr: str
-    ops_queue: queue.Queue[Operation]
+    ops_queue: queue.SimpleQueue[Operation]
     terminate_event: threading.Event
 
     last_request_id: int
@@ -22,7 +22,7 @@ class SocketListener:
     def __init__(
         self,
         sock_addr: str,
-        ops_queue: queue.Queue[Operation],
+        ops_queue: queue.SimpleQueue[Operation],
         terminate_event: threading.Event,
     ) -> None:
         self.sock_addr = sock_addr
