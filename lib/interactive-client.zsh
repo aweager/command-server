@@ -240,7 +240,7 @@ function command-server-status() {
 
 function __command-server-cleanup() {
     if [[ -n "$saved_stty" ]]; then
-        stty "$saved_stty"
+        stty "$saved_stty" &> /dev/null
     fi
 
     local pid
