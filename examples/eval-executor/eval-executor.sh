@@ -17,6 +17,10 @@ run_args_blindly () {
 }
 
 echo "Entering the executor loop!"
+echo "Will overwrite"
+tput cuu1
+sleep 5
+echo "Overwritten"
 
 set -- run_args_blindly "$@"
 . "${COMMAND_SERVER_LIB}/posix-executor-loop.sh"
