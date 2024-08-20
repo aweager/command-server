@@ -20,7 +20,7 @@ function command-server-call() {
     local -a pids
     local request_id result
 
-    local saved_tty
+    local saved_stty
     if [[ -t 0 ]]; then
         saved_stty="$(stty -g)"
     fi
@@ -130,7 +130,7 @@ function command-server-start() {
             __command-server-cleanup
             if [[ -n "$server_pid" ]]; then
                 if print -nu3 &> /dev/null; then
-                    printf '%s' "$server_pid" >&3
+                    printf "%s" "$server_pid" >&3
                 else
                     echo "Server is running at pid $server_pid"
                 fi
