@@ -7,8 +7,7 @@ import random
 from typing import Generator, Optional, Tuple
 
 _HOME = os.getenv("HOME")
-_RUNDIR = os.getenv("XDG_RUNTIME_DIR", f"{_HOME}/.cache")
-_RUNDIR += "/command-server"
+_RUNDIR = os.getenv("XDG_RUNTIME_DIR", f"{_HOME}/.cache") + "/command-server"
 os.makedirs(_RUNDIR, exist_ok=True)
 
 

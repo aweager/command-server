@@ -26,12 +26,14 @@ os.environ["COMMAND_SERVER_LIB"] = str(
 @dataclass
 class CompletionMonitor:
     work_item_id: int
-    completion_fifo: io.TextIOWrapper
+    completion_fifo: str
     ops_queue: queue.SimpleQueue[Operation]
 
     def block_until_done(self) -> None:
-        with self.completion_fifo:
-            self.completion_fifo.readline()
+        _LOGGER.debug(f"Opening completion fifo {self.completion_fifo}")
+        with open(self.completion_fifo) as fifo:
+            _LOGGER.debug(f"Reading completion fifo {self.completion_fifo}")
+            fifo.readline()
             self.ops_queue.put(CompleteWorkItem(self.work_item_id))
 
 
@@ -59,10 +61,10 @@ class Executor:
                 + work_item.command
             )
 
-            _LOGGER.debug("Starting completion listener")
+            _LOGGER.debug(f"Starting completion listener on {completion_fifo}")
             threading.Thread(
                 target=CompletionMonitor(
-                    work_item.id, open(completion_fifo), self.ops_queue
+                    work_item.id, completion_fifo, self.ops_queue
                 ).block_until_done
             ).start()
 

@@ -4,6 +4,7 @@ typeset -gH COMMAND_SERVER_LIB="${0:a:h}"
 
 zmodload zsh/net/socket
 zmodload -F zsh/stat b:zstat
+zmodload zsh/zutil
 
 source "$COMMAND_SERVER_LIB/client-funcs.zsh"
 
@@ -116,10 +117,17 @@ function command-server-start() {
     setopt local_options local_traps err_return
 
     # TODO an actually useful error message for invalid args
+    local -a arg_pid_fd
+    zparseopts -D -K \
+        -pid-fd:=arg_pid_fd
 
     local -a fifos
     local -a pids
-    local server_pid saved_stty
+    local server_pid saved_stty server_pid_fd
+
+    if [[ -n $arg_pid_fd ]]; then
+        server_pid_fd="$arg_pid_fd[-1]"
+    fi
 
     if [[ -t 0 ]]; then
         saved_stty="$(stty -g)"
@@ -129,8 +137,8 @@ function command-server-start() {
         trap '
             __command-server-cleanup
             if [[ -n "$server_pid" ]]; then
-                if print -nu3 &> /dev/null; then
-                    printf "%s" "$server_pid" >&3
+                if [[ -n "$server_pid_fd" ]]; then
+                    printf "%s" "$server_pid" >&$server_pid_fd
                 else
                     echo "Server is running at pid $server_pid"
                 fi
@@ -239,21 +247,22 @@ function command-server-status() {
 }
 
 function __command-server-cleanup() {
-    if [[ -n "$saved_stty" ]]; then
-        stty "$saved_stty" &> /dev/null
-    fi
-
     local pid
     for pid in "$pids[@]"; do
         kill -HUP "$pid" &> /dev/null || true
     done
+    wait "$pids[@]" || true
 
     local fifo
     for fifo in "$fifos[@]"; do
         if [[ -e $fifo ]]; then
-            rm "$fifo"
+            rm "$fifo" || true
         fi
     done
+
+    if [[ -n "$saved_stty" ]]; then
+        stty "$saved_stty" &> /dev/null || true
+    fi
 }
 
 function __command-server-forward-stdio-yes-tty() {
