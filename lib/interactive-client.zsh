@@ -249,7 +249,7 @@ function command-server-status() {
 function __command-server-cleanup() {
     local pid
     for pid in "$pids[@]"; do
-        kill -HUP "$pid" &> /dev/null || true
+        kill -TERM "$pid" &> /dev/null || true
     done
     wait "$pids[@]" || true
 
