@@ -6,12 +6,24 @@ authors = [
 ]
 description = "A server for transparently executing commands in a different environment"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
+
+dependencies = [
+    "result",
+    #"jrpc @ TODO",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["command_server"]
 
 [project.urls]
 Homepage = "https://github.com/aweager/command-server"
