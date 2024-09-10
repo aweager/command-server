@@ -6,7 +6,20 @@ zmodload zsh/net/socket
 zmodload -F zsh/stat b:zstat
 zmodload zsh/zutil
 
-source "$COMMAND_SERVER_LIB/client-funcs.zsh"
+typeset -gAH CommandServerClient
+
+CommandServerClient[rundir]="${XDG_RUNTIME_DIR-${HOME}/.cache}/command-server-client"
+mkdir -p "$CommandServerClient[rundir]"
+chmod 0700 "$CommandServerClient[rundir]"
+
+CommandServerClient[logdir]="${XDG_STATE_DIR-${HOME}/.local/state}/command-server-client"
+mkdir -p "$CommandServerClient[logdir]"
+
+() {
+    local -A StatOutput
+    zstat -H StatOutput /dev/null
+    CommandServerClient[devnull]="${StatOutput[inode]}:${StatOutput[rdev]}"
+}
 
 function command-server-call() {
     setopt local_options local_traps err_return
@@ -358,3 +371,38 @@ function __command-server-forward-fds() {
         done
     fi
 }
+
+function __command-server-raw-send() {
+    setopt local_options err_return
+
+    local send_fd
+
+    {
+        local socket="$1"
+        zsocket "$socket"
+        send_fd="$REPLY"
+        shift
+
+        local -a escaped_tokens=()
+        local token
+        local newline=$'\n'
+        for token; do
+            token="${token//\\/\\\\}"
+            token="${token//${newline}/\\n}"
+            escaped_tokens+=( "$token" )
+        done
+
+        printf '%s\n' "$escaped_tokens[@]" >&$send_fd
+    } always {
+        if [[ -n "$send_fd" ]]; then
+            exec {send_fd}>&-
+        fi
+    }
+}
+
+function __command-server-fd-stat() {
+    local -A StatOutput
+    zstat -H StatOutput -f "$1"
+    REPLY="${StatOutput[inode]}:${StatOutput[rdev]}"
+}
+
