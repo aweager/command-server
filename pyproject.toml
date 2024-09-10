@@ -17,5 +17,9 @@ classifiers = [
 Homepage = "https://github.com/aweager/command-server"
 Issues = "https://github.com/aweager/command-server/issues"
 
-[tools.mypy]
-mypy_path = "$MYPY_CONFIG_FILE_DIR/src"
+[tool.black]
+line-length = 100
+preview = true
+
+[tool.isort]
+profile = "black"

@@ -98,15 +98,9 @@ def _parse_args(argv: list[str]) -> _ArgNamespace:
         help="Arguments to pass when (re)starting the executor",
     )
 
-    arg_parser.add_argument(
-        "stdin", type=pathlib.Path, help="Initial stdin for the executor"
-    )
-    arg_parser.add_argument(
-        "stdout", type=pathlib.Path, help="Initial stdout for the executor"
-    )
-    arg_parser.add_argument(
-        "stderr", type=pathlib.Path, help="Initial stderr for the executor"
-    )
+    arg_parser.add_argument("stdin", type=pathlib.Path, help="Initial stdin for the executor")
+    arg_parser.add_argument("stdout", type=pathlib.Path, help="Initial stdout for the executor")
+    arg_parser.add_argument("stderr", type=pathlib.Path, help="Initial stderr for the executor")
     arg_parser.add_argument(
         "status_pipe",
         type=pathlib.Path,
@@ -145,9 +139,7 @@ def _parse_file(path: Optional[pathlib.Path]):
     if config_parser.has_section("signal_translations"):
         signal_mapping: dict[SupportedSignal, SupportedSignal] = dict()
         for key, value in config_parser["signal_translations"].items():
-            signal_mapping[SupportedSignal[key.upper()]] = SupportedSignal[
-                value.upper()
-            ]
+            signal_mapping[SupportedSignal[key.upper()]] = SupportedSignal[value.upper()]
         signal_translations = SignalTranslations(signal_mapping)
 
     command: Optional[str]
@@ -173,9 +165,7 @@ def _parse_file(path: Optional[pathlib.Path]):
         args=args,
         max_concurrency=config_parser.getint("core", "max_concurrency", fallback=None),
         log_level=config_parser.get("core", "log_level", fallback=None),
-        log_file=config_dir.maybe_relative(
-            config_parser.get("core", "log_file", fallback=None)
-        ),
+        log_file=config_dir.maybe_relative(config_parser.get("core", "log_file", fallback=None)),
         socket_address=config_dir.maybe_relative(
             config_parser.get("core", "socket_address", fallback=None)
         ),
@@ -198,9 +188,7 @@ def parse_config(argv: list[str]) -> CommandServerConfig:
 
     return CommandServerConfig(
         socket_address=str(socket_address),
-        log_level=logging.getLevelNamesMapping()[
-            args.log_level or file.log_level or "WARNING"
-        ],
+        log_level=logging.getLevelNamesMapping()[args.log_level or file.log_level or "WARNING"],
         log_file=str(args.log_file or file.log_file or "/dev/null"),
         executor_config=ExecutorConfig(
             command=file.command,

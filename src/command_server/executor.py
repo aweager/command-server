@@ -17,9 +17,7 @@ from .token_io import Mode, TokenReader, TokenWriter
 
 _LOGGER = logging.getLogger(__name__)
 
-os.environ["COMMAND_SERVER_LIB"] = str(
-    pathlib.Path(__file__).parent.parent.parent.joinpath("lib")
-)
+os.environ["COMMAND_SERVER_LIB"] = str(pathlib.Path(__file__).parent.parent.parent.joinpath("lib"))
 
 
 @dataclass
@@ -252,9 +250,7 @@ class ExecutorManager:
                 status_pipe.write(["127"])
                 return None
 
-        logging.basicConfig(
-            level=all_config.log_level, filename=all_config.log_file, force=True
-        )
+        logging.basicConfig(level=all_config.log_level, filename=all_config.log_file, force=True)
         return all_config.executor_config
 
     def interrupt_pending_work_items(self) -> None:

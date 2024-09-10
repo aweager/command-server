@@ -36,14 +36,10 @@ def main(config: CommandServerConfig) -> int:
         elif not os.path.exists(pathlib.Path(config.socket_address).parent):
             raise RuntimeError("Directory does not exist")
     except Exception as ex:
-        _LOGGER.error(
-            f"Could not bind to socket {config.socket_address}", exc_info=True
-        )
+        _LOGGER.error(f"Could not bind to socket {config.socket_address}", exc_info=True)
         with (
             open(config.initial_load_stdio.stderr, "w") as stderr,
-            token_io.open_pipe_writer(
-                config.initial_load_stdio.status_pipe
-            ) as status_pipe,
+            token_io.open_pipe_writer(config.initial_load_stdio.status_pipe) as status_pipe,
         ):
             stderr.write(f"Could not bind to socket {config.socket_address}: {ex}\n")
             status_pipe.write(["128"])
