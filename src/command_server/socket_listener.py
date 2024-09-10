@@ -1,13 +1,13 @@
-import socket
-import queue
 import logging
+import queue
+import socket
 import threading
 
-from .requests import *
-from .operations import *
-from .model import *
-from .token_io import TokenReader
 from . import token_io
+from .model import *
+from .operations import *
+from .requests import *
+from .token_io import TokenReader
 
 _LOGGER = logging.getLogger(__name__)
 

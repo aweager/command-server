@@ -1,14 +1,14 @@
-from configparser import ConfigParser
-from argparse import ArgumentParser, Namespace
-from dataclasses import dataclass
 import logging
 import os
-from typing import Optional
 import pathlib
 import shlex
 import sys
+from argparse import ArgumentParser, Namespace
+from configparser import ConfigParser
+from dataclasses import dataclass
+from typing import Optional
 
-from .model import SupportedSignal, Stdio
+from .model import Stdio, SupportedSignal
 
 _LOGGER = logging.getLogger(__name__)
 

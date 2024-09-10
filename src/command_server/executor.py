@@ -1,20 +1,19 @@
-from contextlib import contextmanager
 import io
-import pathlib
-import subprocess
-import queue
-import os
 import logging
+import os
+import pathlib
+import queue
+import subprocess
 import sys
 import threading
+from contextlib import contextmanager
 from typing import Generator, Optional
 
-from .server_config import CommandServerConfig, ExecutorConfig
+from . import server_config, token_io
 from .model import *
 from .operations import *
-from . import token_io
-from .token_io import TokenReader, TokenWriter, Mode
-from . import server_config
+from .server_config import CommandServerConfig, ExecutorConfig
+from .token_io import Mode, TokenReader, TokenWriter
 
 _LOGGER = logging.getLogger(__name__)
 

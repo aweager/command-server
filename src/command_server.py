@@ -5,17 +5,17 @@ import sys
 
 sys.path = [str(pathlib.Path(__file__).parent)] + sys.path
 
-import sys
 import os
 import queue
+import sys
 import threading
 
 from command_server import server_config
-from command_server.server_config import CommandServerConfig
-from command_server.requests import *
-from command_server.operations import *
-from command_server.model import *
 from command_server.executor import *
+from command_server.model import *
+from command_server.operations import *
+from command_server.requests import *
+from command_server.server_config import CommandServerConfig
 from command_server.socket_listener import *
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,11 +39,12 @@ def main(config: CommandServerConfig) -> int:
         _LOGGER.error(
             f"Could not bind to socket {config.socket_address}", exc_info=True
         )
-        with open(
-            config.initial_load_stdio.stderr, "w"
-        ) as stderr, token_io.open_pipe_writer(
-            config.initial_load_stdio.status_pipe
-        ) as status_pipe:
+        with (
+            open(config.initial_load_stdio.stderr, "w") as stderr,
+            token_io.open_pipe_writer(
+                config.initial_load_stdio.status_pipe
+            ) as status_pipe,
+        ):
             stderr.write(f"Could not bind to socket {config.socket_address}: {ex}\n")
             status_pipe.write(["128"])
             return 128

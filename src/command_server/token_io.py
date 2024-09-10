@@ -1,9 +1,9 @@
+import os
+import random
+import socket
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
-import os
-import socket
-import random
 from typing import Generator, Optional, Tuple
 
 _HOME = os.getenv("HOME")

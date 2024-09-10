@@ -1,6 +1,6 @@
+import signal
 from dataclasses import dataclass
 from enum import Enum
-import signal
 
 
 class SupportedSignal(Enum):
