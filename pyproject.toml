@@ -19,11 +19,14 @@ dependencies = [
 ]
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = [
+    "setuptools>=61.0",
+    "setuptools-scm>=8.0",
+]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["command_server"]
+packages = ["command_server", "command_server.lib",]
 
 [project.urls]
 Homepage = "https://github.com/aweager/command-server"

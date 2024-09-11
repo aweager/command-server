@@ -1,4 +1,3 @@
-import io
 import logging
 import os
 import pathlib
@@ -17,7 +16,7 @@ from .token_io import Mode, TokenReader, TokenWriter
 
 _LOGGER = logging.getLogger(__name__)
 
-os.environ["COMMAND_SERVER_LIB"] = str(pathlib.Path(__file__).parent.parent.parent.joinpath("lib"))
+os.environ["COMMAND_SERVER_LIB"] = str(pathlib.Path(__file__).parent.joinpath("lib"))
 
 
 @dataclass

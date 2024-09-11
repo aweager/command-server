@@ -175,7 +175,7 @@ function command-server-start() {
         local invocation_id="$RANDOM"
         __command-server-forward-stdio-yes-tty
 
-        python3 "${COMMAND_SERVER_LIB}/../src/command_server.py" \
+        python3 -m command_server.command_server \
             "$@" \
             "$stdin" \
             "$stdout" \
