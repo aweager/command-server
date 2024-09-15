@@ -18,6 +18,8 @@ mkdir -p "$CommandServerClient[logdir]"
 }
 
 function cleanup-forward() {
+    setopt local_options local_traps err_return
+
     local pid
     for pid in "$pids[@]"; do
         kill -TERM "$pid" &> /dev/null || true
@@ -37,6 +39,8 @@ function cleanup-forward() {
 }
 
 function forward-stdio() {
+    setopt local_options local_traps err_return
+
     local stdin_stat stdout_stat stderr_stat
     fd-stat 0; stdin_stat="$REPLY"
     fd-stat 1; stdout_stat="$REPLY"
@@ -75,6 +79,8 @@ function forward-stdio() {
 }
 
 function forward-fds() {
+    setopt local_options local_traps err_return
+
     local fd
 
     if [[ -t "$1" ]]; then
@@ -127,6 +133,8 @@ function forward-fds() {
 }
 
 function fd-stat() {
+    setopt local_options local_traps err_return
+
     local -A StatOutput
     zstat -H StatOutput -f "$1"
     REPLY="${StatOutput[inode]}:${StatOutput[rdev]}"

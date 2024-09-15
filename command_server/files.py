@@ -133,15 +133,14 @@ class Mode(enum.Flag):
     W = 2
 
     def to_flag(self) -> int:
+        rw = Mode.R | Mode.W
         match self:
             case Mode.R:
                 return os.O_RDONLY
             case Mode.W:
                 return os.O_WRONLY
-            case Mode.R | Mode.W:
-                return os.O_RDWR
             case _:
-                raise ValueError()
+                return os.O_RDWR
 
     def to_str(self) -> Literal["rb", "wb", "r+b"]:
         match self:
@@ -149,10 +148,8 @@ class Mode(enum.Flag):
                 return "rb"
             case Mode.W:
                 return "wb"
-            case Mode.R | Mode.W:
-                return "r+b"
             case _:
-                raise ValueError()
+                return "r+b"
 
 
 async def try_open(path: pathlib.Path, mode: Mode) -> Result[AsyncFile, FileOpenFailed]:
@@ -192,20 +189,20 @@ class AsyncFileList:
 async def try_open_multiple(
     *args: tuple[pathlib.Path, Mode]
 ) -> Result[AsyncFileList, FileOpenFailed]:
-    files_to_open: dict[pathlib.Path, Mode] = dict()
+    mode_by_path: dict[pathlib.Path, Mode] = dict()
     for arg in args:
-        if arg[0] not in files_to_open:
-            files_to_open[arg[0]] = arg[1]
+        if arg[0] not in mode_by_path:
+            mode_by_path[arg[0]] = arg[1]
         else:
-            files_to_open[arg[0]] |= arg[1]
+            mode_by_path[arg[0]] |= arg[1]
 
-    files_by_path: dict[pathlib.Path, AsyncFile] = dict()
-    for path, mode in files_to_open.items():
+    file_by_path: dict[pathlib.Path, AsyncFile] = dict()
+    for path, mode in mode_by_path.items():
         match await try_open(path, mode):
             case Ok(file):
-                files_by_path[path] = file
+                file_by_path[path] = file
             case Err() as err:
-                await AsyncFileList(list(files_by_path.values())).close_all()
+                await AsyncFileList(list(file_by_path.values())).close_all()
                 return err
 
-    return Ok(AsyncFileList(list(files_by_path.values())))
+    return Ok(AsyncFileList([file_by_path[arg[0]] for arg in args]))

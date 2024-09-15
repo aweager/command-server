@@ -19,8 +19,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def run_command_server(config: CommandServerConfig, term_future: Future[int]) -> int:
-    # logging.basicConfig(level=config.log_level, filename=config.log_file)
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=config.log_level, filename=config.log_file)
 
     _LOGGER.error(f"=== Starting server instance {os.getpid()} ===")
 

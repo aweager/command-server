@@ -7,6 +7,8 @@
 zmodload zsh/zutil
 
 function start-job() {
+    setopt local_options local_traps err_return
+
     local -a arg_json_list jq_args
     local value i
     i=0
@@ -18,7 +20,8 @@ function start-job() {
         i="$(($i + 1))"
     done
 
-    local id="$(
+    local response
+    response="$(
         jq -nc \
             --arg cwd "$PWD" \
             --arg stdin "$stdin" \
@@ -33,13 +36,15 @@ function start-job() {
                     \"stderr\": \$stderr
                 }
             }" \
-                | jrpc-oneoff request "$socket" command_server.stop \
-                | jq -rcj '.job.id' && echo x
+                | jrpc-oneoff request "$socket" job.start
     )"
+    local id="$(jq -rcj '.job.id'  <<< "$response" && echo x)"
     REPLY="${id%x}"
 }
 
 function signal-job() {
+    setopt local_options local_traps err_return
+
     local id="$1"
     local signal="$2"
 
@@ -50,6 +55,8 @@ function signal-job() {
 }
 
 function wait-for-job() {
+    setopt local_options local_traps err_return
+
     local id="$1"
 
     local exit_code="$(
@@ -63,6 +70,8 @@ function wait-for-job() {
 }
 
 function reload-executor() {
+    setopt local_options local_traps err_return
+
     local -a override_cwd
     local -a override_args
     zparseopts -D \
@@ -108,14 +117,20 @@ function reload-executor() {
         "config_overrides": '
     params+="{ ${(j:,:)config_overrides} }}"
 
-    local id="$(
+    local response
+    response="$(
         jq -nc "$jq_args[@]" "$params" \
-            | jrpc-oneoff request "$socket" executor.reload \
+            | jrpc-oneoff request "$socket" executor.reload
+    )"
+    local id="$(
+        printf '%s' "$response" \
             | jq -rcj '.executor.id' && echo x)"
     REPLY="${id%x}"
 }
 
 function cancel-reload() {
+    setopt local_options local_traps err_return
+
     local id="$1"
     local signal="$2"
 
@@ -126,6 +141,8 @@ function cancel-reload() {
 }
 
 function wait-for-reload() {
+    setopt local_options local_traps err_return
+
     local id="$1"
 
     local exit_code="$(
@@ -142,5 +159,7 @@ function wait-for-reload() {
 }
 
 function stop-server() {
-    echo '{}' | jrpc-oneoff request "$1" command_server.stop > /dev/null
+    setopt local_options local_traps err_return
+
+    echo '{}' | jrpc-oneoff request "$socket" command_server.stop > /dev/null
 }

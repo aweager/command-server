@@ -34,6 +34,8 @@ function command-server() {
 }
 
 function command-server-start() {
+    setopt local_options local_traps err_return
+
     local -a arg_pid_fd
     zparseopts -D \
         -pid-fd:=arg_pid_fd
@@ -68,6 +70,7 @@ function command-server-start() {
             trap "
                 if [[ -n \"\$server_pid\" ]]; then
                     kill -$sig \$server_pid
+                    wait \$server_pid
                 else
                     return $sig_return_val
                 fi
@@ -75,17 +78,19 @@ function command-server-start() {
         done
 
 
-        python3 -m command_server.command_server "$socket" "$@" &
+        python3 -m command_server.command_server "$socket" "$@" & &> /dev/null < /dev/null
         server_pid="$!"
 
         # TODO better than busy wait
         while [[ ! -S "$socket" ]]; do
             sleep 0.1
         done
-    }
+    } "$@"
 }
 
 function command-server-reload() {
+    setopt local_options local_traps err_return
+
     local socket="$1"
     shift
 
@@ -99,7 +104,7 @@ function command-server-reload() {
     local executor_id
 
     () {
-        trap __command-server-cleanup EXIT
+        trap cleanup-forward EXIT
 
         local sig sig_return_val
         for sig in INT TERM QUIT HUP; do
@@ -116,7 +121,7 @@ function command-server-reload() {
 
         local stdin stdout stderr
         local invocation_id="$RANDOM"
-        __command-server-forward-stdio
+        forward-stdio
 
         printf '%s.%s %s reload %s\n' \
             "$$" "$invocation_id" "$socket" "$*" >> "$CommandServerClient[logdir]/client.log"
@@ -129,6 +134,8 @@ function command-server-reload() {
 }
 
 function command-server-run() {
+    setopt local_options local_traps err_return
+
     local socket="$1"
     shift
 
@@ -172,6 +179,8 @@ function command-server-run() {
 }
 
 function command-server-stop() {
+    setopt local_options local_traps err_return
+
     local socket="$1"
     shift
 
