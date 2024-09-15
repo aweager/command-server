@@ -1,0 +1,181 @@
+#!/bin/zsh
+
+source "${0:a:h}/impl/raw-client.zsh"
+source "${0:a:h}/impl/stdio-forwarder.zsh"
+
+function command-server() {
+    setopt local_options local_traps err_return
+
+    local cmd="$1"
+    shift
+
+    case "$cmd" in
+        start)
+            command-server-start "$@"
+            ;;
+
+        reload)
+            command-server-reload "$@"
+            ;;
+
+        run)
+            command-server-run "$@"
+            ;;
+
+        stop)
+            command-server-stop "$@"
+            ;;
+
+        *)
+            printf 'Unknown command-server cmd %s\n' "$cmd" >&2
+            return 1
+            ;;
+    esac
+}
+
+function command-server-start() {
+    local -a arg_pid_fd
+    zparseopts -D \
+        -pid-fd:=arg_pid_fd
+
+    local socket="$1"
+    shift
+
+    if [[ -S "$socket" ]]; then
+        rm "$socket"
+    fi
+
+    local pid_fd
+    if [[ -n $arg_pid_fd ]]; then
+        pid_fd="$arg_pid_fd[-1]"
+    fi
+
+    local server_pid
+    () {
+        trap '
+            if [[ -n $server_pid ]]; then
+                if [[ -n $pid_fd ]]; then
+                    printf '%s' "$server_pid" >&$pid_fd
+                else
+                    printf "Server is running at %s\n" "$server_pid"
+                fi
+            fi
+        ' EXIT
+
+        local sig sig_return_val
+        for sig in INT TERM QUIT HUP; do
+            sig_return_val="$((127 + $signals[(Ie)$sig]))"
+            trap "
+                if [[ -n \"\$server_pid\" ]]; then
+                    kill -$sig \$server_pid
+                else
+                    return $sig_return_val
+                fi
+            " "$sig"
+        done
+
+
+        python3 -m command_server.command_server "$socket" "$@" &
+        server_pid="$!"
+
+        # TODO better than busy wait
+        while [[ ! -S "$socket" ]]; do
+            sleep 0.1
+        done
+    }
+}
+
+function command-server-reload() {
+    local socket="$1"
+    shift
+
+    local saved_stty
+    if [[ -t 0 ]]; then
+        saved_stty="$(stty -g)"
+    fi
+
+    local -a fifos
+    local -a pids
+    local executor_id
+
+    () {
+        trap __command-server-cleanup EXIT
+
+        local sig sig_return_val
+        for sig in INT TERM QUIT HUP; do
+            sig_return_val="$((127 + $signals[(Ie)$sig]))"
+            trap "
+                if [[ -n \"\$executor_id\" ]]; then
+                    cancel-reload \"\$executor_id\" '$sig'
+                    wait-for-reload \"\$executor_id\"
+                else
+                    return $sig_return_val
+                fi
+            " "$sig"
+        done
+
+        local stdin stdout stderr
+        local invocation_id="$RANDOM"
+        __command-server-forward-stdio
+
+        printf '%s.%s %s reload %s\n' \
+            "$$" "$invocation_id" "$socket" "$*" >> "$CommandServerClient[logdir]/client.log"
+
+        reload-executor "$@"
+        executor_id="$REPLY"
+
+        wait-for-reload "$executor_id"
+    } "$@"
+}
+
+function command-server-run() {
+    local socket="$1"
+    shift
+
+    local saved_stty
+    if [[ -t 0 ]]; then
+        saved_stty="$(stty -g)"
+    fi
+
+    local -a fifos
+    local -a pids
+    local job_id
+
+    () {
+        trap cleanup-forward EXIT
+
+        local sig sig_return_val
+        for sig in INT TERM QUIT HUP; do
+            sig_return_val="$((127 + $signals[(Ie)$sig]))"
+            trap "
+                if [[ -n \"\$job_id\" ]]; then
+                    signal-job \"\$job_id\" '$sig'
+                    wait-for-job \"\$job_id\"
+                else
+                    return $sig_return_val
+                fi
+            " "$sig"
+        done
+
+        local stdin stdout stderr
+        local invocation_id="$RANDOM"
+        forward-stdio
+
+        printf '%s.%s %s run %s\n' \
+            "$$" "$invocation_id" "$socket" "$*" >> "$CommandServerClient[logdir]/client.log"
+
+        start-job "$@"
+        job_id="$REPLY"
+
+        wait-for-job "$job_id"
+    } "$@"
+}
+
+function command-server-stop() {
+    local socket="$1"
+    shift
+
+    stop-server
+}
+
+command-server "$@"

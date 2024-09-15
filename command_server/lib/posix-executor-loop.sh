@@ -26,37 +26,41 @@ read_token () {
 EXECUTE_COMMAND="$1"
 INPUT="$2"
 OUTPUT="$3"
-QUEUE_OPS_FIFO="$4"
 
 exec < /dev/null > /dev/null 2>&1
 
-exec 3< "$INPUT" 4> "$OUTPUT"
+exec 4> "$OUTPUT"
 
 # Alert that loading was successful, and we can process requests
-echo 0 > "$OUTPUT"
+echo 0 >&4
+
+exec 3< "$INPUT"
 
 while true; do
-    read_token; REQUEST_ID="$REPLY"
     read_token; WORKING_DIR="$REPLY"
     read_token; STDIN="$REPLY"
     read_token; STDOUT="$REPLY"
     read_token; STDERR="$REPLY"
     read_token; STATUS_PIPE="$REPLY"
-    read_token; COMPLETION_FIFO="$REPLY"
     read_token; NUM_ARGS="$REPLY"
 
-    i=1
-    read_token
-    set -- "$REPLY"
+    printf '%s\n' "$WORKING_DIR" "$STDIN" "$STDOUT" "$STDERR" "$STATUS_PIPE" "$NUM_ARGS"
+
+    i=0
+    set --
     while [ "$i" -lt "$NUM_ARGS" ]; do
         read_token
         set -- "$@" "$REPLY"
         : "$((i = i + 1))"
     done
 
+    printf '%s\n' "$@"
+
     (
+        exec 9> "$STATUS_PIPE"
+
         cd "$WORKING_DIR"
-        "$EXECUTE_COMMAND" "$@" < "$STDIN" > "$STDOUT" 2> "$STDERR" 9> "$COMPLETION_FIFO"
+        "$EXECUTE_COMMAND" "$@" < "$STDIN" > "$STDOUT" 2> "$STDERR"
         CHILD_PID="$!"
 
         printf '%s\n' "$CHILD_PID" >&4
@@ -64,7 +68,7 @@ while true; do
         wait "$CHILD_PID" > /dev/null 2>&1
         RESULT="$?"
 
-        printf '%s\n' "$RESULT" > "$STATUS_PIPE"
+        printf '%s\n' "$RESULT" >&9
     ) &
 
     if [ "$?" -ne 0 ]; then

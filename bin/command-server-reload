@@ -1,5 +1,0 @@
-#!/bin/zsh
-
-source "${0:a:h}/impl/interactive-client.zsh"
-
-command-server-reload "$@"

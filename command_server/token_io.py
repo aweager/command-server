@@ -1,137 +1,66 @@
+import asyncio
+import logging
 import os
-import random
-import socket
-from contextlib import contextmanager
 from dataclasses import dataclass
-from enum import Enum
-from typing import Generator, Optional, Tuple
+from typing import Self
+
+from result import Err, Ok, Result
+
+from .files import AsyncFile, FileOpenFailed, Mode, TempFifo, try_open
+
+_LOGGER = logging.getLogger("token-io")
 
 _HOME = os.getenv("HOME")
 _RUNDIR = os.getenv("XDG_RUNTIME_DIR", f"{_HOME}/.cache") + "/command-server"
 os.makedirs(_RUNDIR, exist_ok=True)
 
 
-@contextmanager
-def mkfifo(name_hint: str) -> Generator[str, None, None]:
-    path = f"{_RUNDIR}/{os.getpid()}.{random.random()}.{name_hint}.pipe"
-    try:
-        os.mkfifo(path)
-        yield path
-    finally:
-        if path is not None:
-            try:
-                os.unlink(path)
-            except FileNotFoundError:
-                pass
-
-
-class Mode(Enum):
-    R = 1
-    W = 2
-    RW = 3
-
-    def to_flag(self) -> int:
-        match self:
-            case Mode.R:
-                return os.O_RDONLY
-            case Mode.W:
-                return os.O_WRONLY
-            case Mode.RW:
-                return os.O_RDWR
-
-
-@contextmanager
-def open_fd(path: str, mode: Mode) -> Generator[int, None, None]:
-    with open_fds((path, mode)) as fds:
-        yield fds[0]
-
-
-@contextmanager
-def open_fds(*args: Tuple[str, Mode]) -> Generator[list[int], None, None]:
-    files_to_open: dict[str, int] = dict()
-    fds_by_file: dict[str, int] = dict()
-    for arg in args:
-        if arg[0] not in files_to_open:
-            files_to_open[arg[0]] = arg[1].value
-        else:
-            files_to_open[arg[0]] |= arg[1].value
-
-    try:
-        for path, mode_value in files_to_open.items():
-            fds_by_file[path] = os.open(path, Mode(mode_value).to_flag())
-        yield [fds_by_file[x[0]] for x in args]
-    finally:
-        for fd in fds_by_file.values():
-            os.close(fd)
-
-
-@dataclass
-class _SocketRecvWrapper:
-    connection: socket.socket
-
-    def read(self) -> Optional[str]:
-        result = self.connection.recv(1024)
-        if len(result) == 0:
-            return None
-        return result.decode()
-
-
-@dataclass
-class _PipeReadWrapper:
-    fd: int
-
-    def read(self) -> Optional[str]:
-        result = os.read(self.fd, 1024)
-        if len(result) == 0:
-            return None
-        return result.decode()
-
-
-_ReadWrapper = _SocketRecvWrapper | _PipeReadWrapper
-
-
 @dataclass
 class TokenReader:
-    file: _ReadWrapper
+    fifo: TempFifo
+    file: AsyncFile
 
     def __post_init__(self) -> None:
-        self.completed_tokens: list[str] = []
-        self.curr_token: str = ""
+        self._buffer: str = ""
 
-    def read(self) -> str:
+    async def read(self) -> str:
         """
         Blocking read for a single token, defaulting to empty string
         """
-        result = self.read_multiple(1)
-        if len(result) == 0:
-            return ""
-        return result[0]
 
-    def read_multiple(self, num: int) -> list[str]:
-        """
-        Blocking read for num tokens.
-
-        Buffers completed, escaped tokens into self.completed_tokens until
-        there are >= num tokens. Then removes them from the buffer and
-        returns them, unescaped.
-        """
-
-        while len(self.completed_tokens) < num:
-            data_str = self.file.read()
-            if data_str:
-                self.curr_token += data_str
-                data = self.curr_token.split("\n")
-                self.completed_tokens += data[0:-1]
-                self.curr_token = data[-1]
+        newline_ind = self._buffer.find("\n")
+        while newline_ind < 0:
+            chunk = await self.file.read()
+            if chunk:
+                self._buffer += chunk.decode()
+                newline_ind = self._buffer.find("\n")
             else:
                 # nothing left to read, return what we have
-                result = [self._unescape(x) for x in self.completed_tokens]
-                self.completed_tokens = []
+                result = self._unescape(self._buffer)
+                self._buffer = ""
                 return result
 
-        result = [self._unescape(self.completed_tokens[x]) for x in range(num)]
-        self.completed_tokens = self.completed_tokens[num:]
+        result = self._unescape(self._buffer[0:newline_ind])
+        self._buffer = self._buffer[newline_ind + 1 :]
         return result
+
+    async def read_int(self) -> Result[int, str]:
+        token = await self.read()
+        try:
+            return Ok(int(token))
+        except ValueError:
+            return Err(token)
+
+    async def close(self) -> None:
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(self.file.close())
+            tg.create_task(self.fifo.unlink())
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, type, value, tb) -> None:
+        await self.close()
 
     def _unescape(self, token: str) -> str:
         """
@@ -160,29 +89,30 @@ class TokenReader:
         return result
 
 
-@contextmanager
-def open_pipe_reader(path: str) -> Generator[TokenReader, None, None]:
-    with open_fd(path, Mode.R) as fd:
-        yield TokenReader(_PipeReadWrapper(fd))
-
-
-@contextmanager
-def accept_connection(server: socket.socket) -> Generator[TokenReader, None, None]:
-    with server.accept()[0] as connection:
-        yield TokenReader(_SocketRecvWrapper(connection))
+async def open_pipe_reader(fifo: TempFifo) -> Result[TokenReader, FileOpenFailed]:
+    _LOGGER.debug(f"Opening {fifo.path=} for reading")
+    return (await try_open(fifo.path, Mode.R)).map(lambda f: TokenReader(fifo, f))
 
 
 @dataclass
 class TokenWriter:
-    fd: int
+    fifo: TempFifo
+    file: AsyncFile
 
-    def write(self, tokens: list[str]) -> None:
+    async def write(self, tokens: list[str]) -> None:
         """
         Blocking write for a list of tokens.
         """
 
-        data = "\n".join([self._escape(token) for token in tokens]) + "\n"
-        os.write(self.fd, data.encode())
+        _LOGGER.debug(f"Writing {tokens=}")
+
+        data_str = "\n".join([self._escape(token) for token in tokens]) + "\n"
+        await self.file.write(data_str.encode())
+
+    async def close(self) -> None:
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(self.file.close())
+            tg.create_task(self.fifo.unlink())
 
     def _escape(self, token: str) -> str:
         """
@@ -191,8 +121,13 @@ class TokenWriter:
 
         return token.replace("\\", "\\\\").replace("\n", "\\n")
 
+    async def __aenter__(self) -> Self:
+        return self
 
-@contextmanager
-def open_pipe_writer(path: str) -> Generator[TokenWriter, None, None]:
-    with open_fd(path, Mode.W) as fd:
-        yield TokenWriter(fd)
+    async def __aexit__(self, type, value, tb) -> None:
+        await self.close()
+
+
+async def open_pipe_writer(fifo: TempFifo) -> Result[TokenWriter, FileOpenFailed]:
+    _LOGGER.debug(f"Opening {fifo.path=} for writing")
+    return (await try_open(fifo.path, Mode.W)).map(lambda f: TokenWriter(fifo, f))
