@@ -87,7 +87,7 @@ class ReloadExecutorResult(JsonTryLoadMixin):
 @dataclass
 class CancelReloadParams(JsonTryLoadMixin):
     id: str
-    signal: Signal
+    signal: Signal = field(metadata=config(mm_field=fields.Enum(Signal)))
 
 
 @dataclass
@@ -120,12 +120,12 @@ class StartJobResult(JsonTryLoadMixin):
 @dataclass
 class SignalJobParams(JsonTryLoadMixin):
     id: str
-    signal: Signal
+    signal: Signal = field(metadata=config(mm_field=fields.Enum(Signal)))
 
 
 @dataclass
 class SignalJobResult(JsonTryLoadMixin):
-    actual_signal: Signal
+    actual_signal: Signal = field(metadata=config(mm_field=fields.Enum(Signal)))
 
 
 @dataclass
