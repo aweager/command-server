@@ -30,20 +30,20 @@ async def run_command_server(config: CommandServerConfig, term_future: Future[in
 
     server = await asyncio.start_unix_server(connection_callback, path=config.socket_path)
     try:
-        # async with impl:
-        _LOGGER.info(f"Server listening on {config.socket_path}")
-        try:
-            await asyncio.wait(
-                [asyncio.create_task(stop_event.wait()), term_future],
-                return_when=FIRST_COMPLETED,
-            )
-        finally:
-            _LOGGER.info("Server shutting down")
-            server.close()
+        async with impl:
+            _LOGGER.info(f"Server listening on {config.socket_path}")
+            try:
+                await asyncio.wait(
+                    [asyncio.create_task(stop_event.wait()), term_future],
+                    return_when=FIRST_COMPLETED,
+                )
+            finally:
+                _LOGGER.info("Server shutting down")
+                server.close()
 
-        if term_future.done():
-            return term_future.result()
-        return 0
+            if term_future.done():
+                return term_future.result()
+            return 0
     finally:
         try:
             os.unlink(config.socket_path)
