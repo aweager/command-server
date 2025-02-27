@@ -36,9 +36,15 @@ function command-server() {
 function command-server-start() {
     setopt local_options local_traps err_return
 
-    local -a arg_pid_fd
-    zparseopts -D \
-        -pid-fd:=arg_pid_fd
+    local -A Options
+    zparseopts -D -E -A Options \
+        -pid-fd: \
+        -log-file: \
+        -log-level:
+
+    local -a args=("$@")
+    args[$args[(i)--]]=()
+    set -- "$args[@]"
 
     local socket="$1"
     shift
@@ -48,8 +54,9 @@ function command-server-start() {
     fi
 
     local pid_fd
-    if [[ -n $arg_pid_fd ]]; then
-        pid_fd="$arg_pid_fd[-1]"
+    if [[ -n $Options[--pid-fd] ]]; then
+        pid_fd="$Options[--pid-fd]"
+        unset "Options[--pid-fd]"
     fi
 
     local server_pid
@@ -78,7 +85,7 @@ function command-server-start() {
         done
 
 
-        python3 -m command_server.command_server "$socket" "$@" & &> /dev/null < /dev/null
+        python3 -m command_server.command_server "${(@kv)Options}" -- "$socket" "$@" & &> /dev/null < /dev/null
         server_pid="$!"
 
         # TODO better than busy wait

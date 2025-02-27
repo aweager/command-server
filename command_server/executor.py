@@ -252,6 +252,8 @@ async def make_executor(
                 tg.create_task(read_fifo.unlink())
             return err
 
+    _LOGGER.debug(f"{config.command} {write_fifo.path} {read_fifo.path} {config.args}")
+
     subprocess = await asyncio.subprocess.create_subprocess_exec(
         config.command,
         str(write_fifo.path),
